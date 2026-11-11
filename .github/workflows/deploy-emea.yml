@@ -1,0 +1,110 @@
+# EMEA regional promotion pipeline: Design → Sandbox → Production.
+# Triggered when the "Publish to Exchange" workflow completes successfully on main.
+# Each stage deploys the SAME binary (uploaded by publish.yml — no rebuild).
+#
+# Environment gates:
+#   emea-dev  — no approval required (auto-promotion from Design trigger)
+#   emea-test — no approval required (auto-promotion from Design success)
+#   emea-prod — requires approval from mule-approvers-emea team
+#
+# Prod secrets (EMEA_PROD_CLIENT_ID/_SECRET) are wired below but are unusable
+# until the Connected App is created and the org secrets are populated.
+name: Deploy EMEA
+
+on:
+  workflow_run:
+    workflows: ["Publish to Exchange"]
+    types: [completed]
+    branches: [main]
+
+# Read contents for checkout; read actions for cross-run artifact download.
+permissions:
+  contents: read
+  actions: read
+
+# ── EMEA Anypoint coordinates ─────────────────────────────────────────────────
+env:
+  EMEA_BG_ID: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+  # Anypoint environment names — must match exactly as configured in Runtime Manager.
+  # TO CONFIRM: verify these names against the actual Anypoint environment names.
+  EMEA_DESIGN_ENV: 'Design'
+  EMEA_SANDBOX_ENV: 'Sandbox'
+  EMEA_PROD_ENV: 'Production'
+  # CloudHub 2.0 region — TO CONFIRM: e.g. us-east-1, eu-west-1.
+  CH2_REGION: 'eu-west-1'
+
+jobs:
+  # ── Stage 1: Design (auto) ─────────────────────────────────────────────────
+  deploy-design:
+    name: Deploy to Design (EMEA)
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    environment: emea-dev
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      anypoint_env: 'Design'
+      # App name: repo name + env suffix (lowercase, ≤ 42 chars for CH2).
+      # TO CONFIRM: adjust to match the actual Anypoint app naming convention.
+      app_name: '${{ github.event.repository.name }}-dev'
+    secrets:
+      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      # TO CONFIRM: create EMEA_DESIGN_CLIENT_ID/SECRET org secrets (env-level autodiscovery creds).
+      env_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      # TO CONFIRM: create EMEA_DESIGN_SECURE_KEY org secret.
+      secure_key: ${{ secrets.EMEA_DESIGN_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+      mulesoft_ee_username: ${{ secrets.MULESOFT_EE_USERNAME }}
+      mulesoft_ee_password: ${{ secrets.MULESOFT_EE_PASSWORD }}
+
+  # ── Stage 2: Sandbox (auto after Design) ───────────────────────────────────
+  deploy-sandbox:
+    name: Deploy to Sandbox (EMEA)
+    needs: deploy-design
+    environment: emea-test
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      anypoint_env: 'Sandbox'
+      app_name: '${{ github.event.repository.name }}-test'
+    secrets:
+      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.EMEA_SANDBOX_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+      mulesoft_ee_username: ${{ secrets.MULESOFT_EE_USERNAME }}
+      mulesoft_ee_password: ${{ secrets.MULESOFT_EE_PASSWORD }}
+
+  # ── Stage 3: Production (gated — mule-approvers-emea approval required) ────
+  deploy-production:
+    name: Deploy to Production (EMEA)
+    needs: deploy-sandbox
+    environment: emea-prod   # GitHub environment: approval gate from mule-approvers-emea
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      anypoint_env: 'Production'
+      # No env suffix for production (single prod instance per CH2 convention).
+      app_name: '${{ github.event.repository.name }}'
+      replicas: '2'
+      vcores: '0.2'
+    secrets:
+      # Prod secrets are wired but UNUSABLE until the Connected App is created and
+      # EMEA_PROD_CLIENT_ID/_SECRET are populated in org secrets.
+      connected_app_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+      mulesoft_ee_username: ${{ secrets.MULESOFT_EE_USERNAME }}
+      mulesoft_ee_password: ${{ secrets.MULESOFT_EE_PASSWORD }}

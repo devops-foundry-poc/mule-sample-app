@@ -1,0 +1,9 @@
+# Per-repo declaration of Anypoint deployment regions.
+# Each region maps to a dedicated GitHub environment pair (nonprod + prod)
+# and a regional Business Group in Anypoint Platform.
+#
+# Valid region keys: emea, amer
+# Remove a region to exclude it from all deploy pipelines.
+regions:
+  - emea    # BG: 57c5735b-b5cd-474c-b978-c9bdb69fb472
+  - amer    # BG: 3d315b55-1b77-40a0-9e6b-301ef87e93d1

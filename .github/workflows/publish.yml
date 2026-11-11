@@ -1,0 +1,37 @@
+# Triggered on merge to main.
+# Strips -SNAPSHOT, builds the Mule application, publishes to Anypoint Exchange,
+# and uploads the JAR as a GitHub Actions artifact so the regional deploy workflows
+# can promote the same binary (no rebuild).
+#
+# After this workflow completes successfully, deploy-emea.yml and deploy-amer.yml
+# are triggered automatically via the workflow_run event.
+name: Publish to Exchange
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  # Required so upload-artifact (called inside the reusable workflow) can write artifacts.
+  actions: write
+
+jobs:
+  publish:
+    name: Exchange publish
+    # No GitHub environment gate here; design-level promotion is initiated in
+    # deploy-emea.yml / deploy-amer.yml (emea-dev / amer-dev environments).
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/exchange-publish.yml@main
+    with:
+      # EMEA BG is the primary publish target for this sample app.
+      # TO CONFIRM: if the app targets both regions with one Exchange artifact, use the root BG ID.
+      # Root BG: 427b3435-71d5-43d2-95a8-5c2a683d97a8
+      # EMEA BG:  57c5735b-b5cd-474c-b978-c9bdb69fb472
+      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      upload_artifact: true
+      artifact_name: mule-app
+    secrets:
+      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      mulesoft_ee_username: ${{ secrets.MULESOFT_EE_USERNAME }}
+      mulesoft_ee_password: ${{ secrets.MULESOFT_EE_PASSWORD }}
