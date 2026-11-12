@@ -80,6 +80,11 @@ jobs:
           echo "version=${UNIQUE}" >> "$GITHUB_OUTPUT"
           echo "Publishing version: ${UNIQUE}"
 
+      - name: Build Mule application JAR
+        run: |
+          $MVN package -DskipTests \
+            --no-transfer-progress --batch-mode
+
       - name: Publish to Exchange via REST API
         # exchange-mule-maven-plugin consistently returns 500 on exchange-eof.
         # Publish directly via the Exchange Asset Manager v2 REST API instead.
