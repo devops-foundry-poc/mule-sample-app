@@ -2,27 +2,22 @@
 # Triggered when the "Publish to Exchange" workflow completes successfully on main.
 #
 # ── Region selection ──────────────────────────────────────────────────────────
-# Set the repository variable DEPLOY_REGIONS in:
-#   GitHub → this repo → Settings → Secrets and variables → Variables
-# Value: comma-separated list of region keys.
-#   Both regions:  emea,amer
-#   EMEA only:     emea
-#   AMER only:     amer
+# Target regions are read from .regions.yml at the root of this repo.
+# To add or remove a region, update .regions.yml and merge — no settings to change.
+# Valid keys: emea, amer
 #
-# Each region runs as an independent track (Design → Sandbox → Production).
-# A failure in the EMEA track does not affect the AMER track and vice versa.
+# The get-regions job reads the file and the two regional tracks activate or
+# skip based on the result.  A track that is skipped has no effect on the other.
 #
 # ── Environment gates ────────────────────────────────────────────────────────
 #   *-dev  — no approval required (auto-promotion)
 #   *-test — no approval required (auto-promotion)
-#   *-prod — requires approval from the regional approver team
-#             emea-prod → mule-approvers-emea
-#             amer-prod → mule-approvers-amer
+#   emea-prod — requires approval from mule-approvers-emea
+#   amer-prod — requires approval from mule-approvers-amer
 #
 # ── Prod secrets ─────────────────────────────────────────────────────────────
 # EMEA_PROD_CLIENT_ID/_SECRET and AMER_PROD_CLIENT_ID/_SECRET are wired but
-# unusable until the Anypoint Connected Apps are created and the secrets are
-# populated in org secrets.
+# unusable until the Anypoint Connected Apps are created and org secrets filled.
 name: Deploy
 
 on:
@@ -36,15 +31,48 @@ permissions:
   actions: read   # required for cross-run artifact download
 
 jobs:
+  # ── Read .regions.yml from the commit that triggered the publish ──────────
+  get-regions:
+    name: Read target regions
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      regions: ${{ steps.parse.outputs.regions }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Parse .regions.yml
+        id: parse
+        run: |
+          python3 - << 'EOF'
+          import yaml, json, os
+
+          with open('.regions.yml') as f:
+              data = yaml.safe_load(f)
+
+          regions = data.get('regions', [])
+          # Validate: only known keys are allowed
+          known = {'emea', 'amer'}
+          invalid = [r for r in regions if r not in known]
+          if invalid:
+              raise SystemExit(f".regions.yml contains unknown region(s): {invalid}")
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f"regions={json.dumps(regions)}\n")
+
+          print(f"Active regions: {regions}")
+          EOF
+
   # ════════════════════════════════════════════════════════════════════════════
-  # EMEA  track  (active when DEPLOY_REGIONS contains 'emea')
+  # EMEA track  (skipped when 'emea' is absent from .regions.yml)
   # ════════════════════════════════════════════════════════════════════════════
 
   emea-design:
     name: EMEA — Design
-    if: >-
-      ${{ github.event.workflow_run.conclusion == 'success' &&
-          contains(vars.DEPLOY_REGIONS, 'emea') }}
+    needs: get-regions
+    if: ${{ contains(fromJson(needs.get-regions.outputs.regions), 'emea') }}
     environment: emea-dev
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
@@ -102,14 +130,13 @@ jobs:
       github_token: ${{ secrets.GITHUB_TOKEN }}
 
   # ════════════════════════════════════════════════════════════════════════════
-  # AMER  track  (active when DEPLOY_REGIONS contains 'amer')
+  # AMER track  (skipped when 'amer' is absent from .regions.yml)
   # ════════════════════════════════════════════════════════════════════════════
 
   amer-design:
     name: AMER — Design
-    if: >-
-      ${{ github.event.workflow_run.conclusion == 'success' &&
-          contains(vars.DEPLOY_REGIONS, 'amer') }}
+    needs: get-regions
+    if: ${{ contains(fromJson(needs.get-regions.outputs.regions), 'amer') }}
     environment: amer-dev
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
