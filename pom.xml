@@ -8,7 +8,7 @@
   <parent>
     <groupId>427b3435-71d5-43d2-95a8-5c2a683d97a8</groupId>
     <artifactId>mule-shared-assets-pom</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.2</version>
   </parent>
 
   <!--
@@ -60,33 +60,5 @@
     </repository>
   </repositories>
 
-  <!--
-    Adds <target> to the ch2 profile inherited from the parent POM.
-    Maven merges child profiles with the same id; the parent provides all
-    other cloudhub2Deployment fields; this child block contributes <target>.
-    Value is injected by ch2-deploy.yml via -Dapp.target.
-    Remove this block once the parent POM is bumped to 1.0.1+ (which already
-    includes <target>${app.target}</target> in its ch2 profile).
-  -->
-  <profiles>
-    <profile>
-      <id>ch2</id>
-      <build>
-        <plugins>
-          <plugin>
-            <groupId>org.mule.tools.maven</groupId>
-            <artifactId>mule-maven-plugin</artifactId>
-            <version>${mule-maven-plugin.version}</version>
-            <extensions>true</extensions>
-            <configuration>
-              <cloudhub2Deployment>
-                <target>${app.target}</target>
-              </cloudhub2Deployment>
-            </configuration>
-          </plugin>
-        </plugins>
-      </build>
-    </profile>
-  </profiles>
 
 </project>
