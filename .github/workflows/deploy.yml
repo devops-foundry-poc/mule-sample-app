@@ -1,18 +1,18 @@
 # Regional promotion pipeline: Design → Sandbox → Production.
 # Triggered when the "Publish to Exchange" workflow completes successfully on main.
 #
-# GitHub Actions does not allow `environment:` on a `uses:` (reusable workflow) job.
+# GitHub Actions does not allow `environment:` on a `uses:` job (reusable workflow call).
 # Production approval gates are handled by a thin gate job (runs-on + environment)
 # that chains into the reusable deploy job.
+#
+# GitHub Actions also does not allow `env` context in `strategy.matrix`.
+# The region config (BG IDs) is therefore inlined in each stage's matrix block.
+# To add a region or change a BG ID, update all four matrix blocks below.
 #
 # ── Region control (repository variables) ────────────────────────────────────
 # Set in:  this repo → Settings → Secrets and variables → Variables
 #   DEPLOY_EMEA   true | false
 #   DEPLOY_AMER   true | false
-#
-# ── Region config block ───────────────────────────────────────────────────────
-# Edit REGIONS_MATRIX to add/remove regions or update BG IDs.
-# Every stage fans out over it automatically.
 #
 # ── Behaviour ────────────────────────────────────────────────────────────────
 # Both true  → approve-emea / approve-amer gates run in parallel; each team
@@ -30,13 +30,6 @@ on:
 permissions:
   contents: read
   actions: read
-
-env:
-  REGIONS_MATRIX: >-
-    {"include":[
-      {"region":"emea","bg_id":"57c5735b-b5cd-474c-b978-c9bdb69fb472"},
-      {"region":"amer","bg_id":"3d315b55-1b77-40a0-9e6b-301ef87e93d1"}
-    ]}
 
 jobs:
   # ── Pre-deployment gates (both-region mode only) ──────────────────────────
@@ -67,10 +60,13 @@ jobs:
     name: Deploy Design (${{ matrix.region }})
     needs: [approve-emea, approve-amer]
     strategy:
-      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      matrix:
+        include:
+          - region: emea
+            bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+          - region: amer
+            bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
       fail-fast: false
-    # No environment: here — environment on uses: is not supported by GitHub Actions.
-    # Design has no approval gate; it auto-proceeds after the pre-deploy gate.
     if: >-
       ${{ github.event.workflow_run.conclusion == 'success' &&
           ((matrix.region == 'emea' && vars.DEPLOY_EMEA == 'true' &&
@@ -113,7 +109,12 @@ jobs:
     name: Deploy Sandbox (${{ matrix.region }})
     needs: deploy-design
     strategy:
-      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      matrix:
+        include:
+          - region: emea
+            bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+          - region: amer
+            bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
       fail-fast: false
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
@@ -145,19 +146,19 @@ jobs:
             || secrets.AMER_SANDBOX_SECURE_KEY }}
       github_token: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── Stage 3: Production — gate job holds the approval, deploy job runs after ──
-  # Split into two because environment: cannot be used on a uses: job.
-  # The gate job (runs-on) holds the environment and its approval rules.
-  # The deploy job (uses:) runs after the gate is approved.
+  # ── Stage 3: Production — gate job holds approval, deploy job runs after ──
 
   deploy-production-gate:
     name: Await production approval (${{ matrix.region }})
     needs: deploy-sandbox
     runs-on: ubuntu-latest
     strategy:
-      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      matrix:
+        include:
+          - region: emea
+          - region: amer
       fail-fast: false
-    environment: ${{ matrix.region }}-prod   # approval gate: mule-approvers-emea/amer
+    environment: ${{ matrix.region }}-prod   # approval gate per region
     steps:
       - run: echo "Production deployment approved for ${{ matrix.region }}"
 
@@ -165,7 +166,12 @@ jobs:
     name: Deploy Production (${{ matrix.region }})
     needs: deploy-production-gate
     strategy:
-      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      matrix:
+        include:
+          - region: emea
+            bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+          - region: amer
+            bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
       fail-fast: false
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
