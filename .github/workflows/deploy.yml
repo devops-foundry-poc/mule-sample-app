@@ -1,23 +1,28 @@
 # Regional promotion pipeline: Design → Sandbox → Production.
 # Triggered when the "Publish to Exchange" workflow completes successfully on main.
 #
-# ── Region selection ──────────────────────────────────────────────────────────
-# Target regions are read from .regions.yml at the root of this repo.
-# To add or remove a region, update .regions.yml and merge — no settings to change.
-# Valid keys: emea, amer
+# ── Region control (repository variables) ────────────────────────────────────
+# Set these in:  this repo → Settings → Secrets and variables → Variables
 #
-# The get-regions job reads the file and the two regional tracks activate or
-# skip based on the result.  A track that is skipped has no effect on the other.
+#   DEPLOY_EMEA   true | false
+#   DEPLOY_AMER   true | false
 #
-# ── Environment gates ────────────────────────────────────────────────────────
-#   *-dev  — no approval required (auto-promotion)
-#   *-test — no approval required (auto-promotion)
-#   emea-prod — requires approval from mule-approvers-emea
-#   amer-prod — requires approval from mule-approvers-amer
+# ── Behaviour ────────────────────────────────────────────────────────────────
+#   Both true  → the workflow pauses at approve-emea / approve-amer and waits
+#                for each region's approver team to decide before any deployment
+#                starts for that region.  The two gates run in parallel so the
+#                teams decide independently.
+#   One true   → that region's track starts automatically (no gate).
+#   Both false → all deploy jobs are skipped.
 #
-# ── Prod secrets ─────────────────────────────────────────────────────────────
-# EMEA_PROD_CLIENT_ID/_SECRET and AMER_PROD_CLIENT_ID/_SECRET are wired but
-# unusable until the Anypoint Connected Apps are created and org secrets filled.
+# ── Gate environments (pre-deployment, both-region mode only) ────────────────
+#   emea-gate  → required reviewer: mule-approvers-emea
+#   amer-gate  → required reviewer: mule-approvers-amer
+#
+# ── Deployment environment gates ─────────────────────────────────────────────
+#   *-dev, *-test  — no approval (auto-promotion through the stages)
+#   emea-prod      — required reviewer: mule-approvers-emea
+#   amer-prod      — required reviewer: mule-approvers-amer
 name: Deploy
 
 on:
@@ -31,48 +36,49 @@ permissions:
   actions: read   # required for cross-run artifact download
 
 jobs:
-  # ── Read .regions.yml from the commit that triggered the publish ──────────
-  get-regions:
-    name: Read target regions
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+  # ── Pre-deployment gates ──────────────────────────────────────────────────
+  # These jobs only activate when BOTH regions are enabled.
+  # When only one region is active the gate is skipped and the
+  # downstream track proceeds without waiting.
+
+  approve-emea:
+    name: Approve EMEA deployment
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
     runs-on: ubuntu-latest
-    outputs:
-      regions: ${{ steps.parse.outputs.regions }}
+    environment: emea-gate   # pauses here — mule-approvers-emea must approve
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+      - run: echo "EMEA deployment approved"
 
-      - name: Parse .regions.yml
-        id: parse
-        run: |
-          python3 - << 'EOF'
-          import yaml, json, os
-
-          with open('.regions.yml') as f:
-              data = yaml.safe_load(f)
-
-          regions = data.get('regions', [])
-          # Validate: only known keys are allowed
-          known = {'emea', 'amer'}
-          invalid = [r for r in regions if r not in known]
-          if invalid:
-              raise SystemExit(f".regions.yml contains unknown region(s): {invalid}")
-
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              out.write(f"regions={json.dumps(regions)}\n")
-
-          print(f"Active regions: {regions}")
-          EOF
+  approve-amer:
+    name: Approve AMER deployment
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
+    runs-on: ubuntu-latest
+    environment: amer-gate   # pauses here — mule-approvers-amer must approve
+    steps:
+      - run: echo "AMER deployment approved"
 
   # ════════════════════════════════════════════════════════════════════════════
-  # EMEA track  (skipped when 'emea' is absent from .regions.yml)
+  # EMEA track  (Design → Sandbox → Production)
+  # Proceeds automatically when DEPLOY_EMEA=true and DEPLOY_AMER=false.
+  # Waits for approve-emea when both regions are active.
   # ════════════════════════════════════════════════════════════════════════════
 
   emea-design:
     name: EMEA — Design
-    needs: get-regions
-    if: ${{ contains(fromJson(needs.get-regions.outputs.regions), 'emea') }}
+    needs: [approve-emea]
+    # Run when:
+    #   • EMEA is enabled, AND
+    #   • the publish succeeded, AND
+    #   • the gate either approved (both-region) or was skipped (single-region).
+    if: >-
+      ${{ vars.DEPLOY_EMEA == 'true' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          (needs.approve-emea.result == 'success' ||
+           needs.approve-emea.result == 'skipped') }}
     environment: emea-dev
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
@@ -130,13 +136,19 @@ jobs:
       github_token: ${{ secrets.GITHUB_TOKEN }}
 
   # ════════════════════════════════════════════════════════════════════════════
-  # AMER track  (skipped when 'amer' is absent from .regions.yml)
+  # AMER track  (Design → Sandbox → Production)
+  # Proceeds automatically when DEPLOY_AMER=true and DEPLOY_EMEA=false.
+  # Waits for approve-amer when both regions are active.
   # ════════════════════════════════════════════════════════════════════════════
 
   amer-design:
     name: AMER — Design
-    needs: get-regions
-    if: ${{ contains(fromJson(needs.get-regions.outputs.regions), 'amer') }}
+    needs: [approve-amer]
+    if: >-
+      ${{ vars.DEPLOY_AMER == 'true' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          (needs.approve-amer.result == 'success' ||
+           needs.approve-amer.result == 'skipped') }}
     environment: amer-dev
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
