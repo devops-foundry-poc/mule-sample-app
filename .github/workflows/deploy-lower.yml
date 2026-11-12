@@ -72,7 +72,7 @@ jobs:
           BASE=$($MVN help:evaluate -Dexpression=project.version -q -DforceStdout \
             --no-transfer-progress --batch-mode)
           RELEASE="${BASE%-SNAPSHOT}"
-          UNIQUE="${RELEASE}.${{ github.run_number }}"
+          UNIQUE="${RELEASE}-dev.${{ github.run_number }}"
           $MVN versions:set -DnewVersion="${UNIQUE}" \
             -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
           echo "version=${UNIQUE}" >> "$GITHUB_OUTPUT"
