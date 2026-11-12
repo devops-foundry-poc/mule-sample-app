@@ -23,11 +23,9 @@ jobs:
     # deploy-emea.yml / deploy-amer.yml (emea-dev / amer-dev environments).
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/exchange-publish.yml@main
     with:
-      # EMEA BG is the primary publish target for this sample app.
-      # TO CONFIRM: if the app targets both regions with one Exchange artifact, use the root BG ID.
-      # Root BG: 427b3435-71d5-43d2-95a8-5c2a683d97a8
-      # EMEA BG:  57c5735b-b5cd-474c-b978-c9bdb69fb472
-      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      # bg_id is read from pom.xml <groupId> inside the reusable workflow.
+      # Set the app's pom.xml groupId to the target Anypoint BG UUID to control
+      # which BG the Exchange asset lands in.
       upload_artifact: true
       artifact_name: mule-app
     secrets:
