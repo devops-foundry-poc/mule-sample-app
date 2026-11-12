@@ -8,81 +8,12 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
-  approve-emea:
-    name: Approve EMEA production deployment
-    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
+  gate:
+    name: Production gate
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: emea-gate
     steps:
-      - run: echo "EMEA approved"
-
-  approve-amer:
-    name: Approve AMER production deployment
-    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
-    runs-on: ubuntu-latest
-    environment: amer-gate
-    steps:
-      - run: echo "AMER approved"
-
-  emea-production-gate:
-    name: Await EMEA production approval
-    needs: [approve-emea, approve-amer]
-    if: ${{ vars.DEPLOY_EMEA == 'true' && github.event.workflow_run.conclusion == 'success' && (needs.approve-emea.result == 'success' || needs.approve-emea.result == 'skipped') }}
-    runs-on: ubuntu-latest
-    environment: emea-prod
-    steps:
-      - run: echo "EMEA production approved"
-
-  emea-production:
-    name: Deploy Production (emea)
-    needs: emea-production-gate
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
-    with:
-      artifact_name: mule-app
-      artifact_run_id: ${{ github.event.workflow_run.id }}
-      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
-      anypoint_env: 'Production'
-      ch2_target: ${{ vars.EMEA_CH2_TARGET }}
-      app_name: ${{ github.event.repository.name }}
-      replicas: '2'
-      vcores: '0.2'
-    secrets:
-      connected_app_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
-      gh_token: ${{ secrets.GITHUB_TOKEN }}
-
-  amer-production-gate:
-    name: Await AMER production approval
-    needs: [approve-emea, approve-amer]
-    if: ${{ vars.DEPLOY_AMER == 'true' && github.event.workflow_run.conclusion == 'success' && (needs.approve-amer.result == 'success' || needs.approve-amer.result == 'skipped') }}
-    runs-on: ubuntu-latest
-    environment: amer-prod
-    steps:
-      - run: echo "AMER production approved"
-
-  amer-production:
-    name: Deploy Production (amer)
-    needs: amer-production-gate
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
-    with:
-      artifact_name: mule-app
-      artifact_run_id: ${{ github.event.workflow_run.id }}
-      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
-      anypoint_env: 'Production'
-      ch2_target: ${{ vars.AMER_CH2_TARGET }}
-      app_name: ${{ github.event.repository.name }}
-      replicas: '2'
-      vcores: '0.2'
-    secrets:
-      connected_app_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.AMER_PROD_SECURE_KEY }}
-      gh_token: ${{ secrets.GITHUB_TOKEN }}
+      - run: echo "Gate passed for ${{ github.event.workflow_run.head_sha }}"
