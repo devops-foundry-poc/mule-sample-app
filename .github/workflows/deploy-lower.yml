@@ -1,0 +1,120 @@
+# Manual lower-environment deploy for pre-merge testing.
+# Run this from any branch (feature or main) to deploy to Design or Sandbox.
+# The app is built from the current branch, uploaded as a workflow artifact,
+# and deployed directly to CloudHub 2.0 — no Exchange publish required.
+#
+# Typical usage:
+#   1. Develop on feature/<ticket>-<desc>
+#   2. Trigger this workflow → Deploy to Design → test
+#   3. If good, trigger again → Deploy to Sandbox → test
+#   4. Open PR → merge to main → deploy.yml handles Production
+name: Deploy to lower environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: 'Anypoint environment name (must match Runtime Manager exactly)'
+        type: choice
+        options:
+          - Design
+          - Sandbox
+        default: Design
+        required: true
+      region:
+        description: 'Deployment region'
+        type: choice
+        options:
+          - emea
+          - amer
+        default: emea
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+  actions: write   # required to upload the build artifact
+
+jobs:
+  build:
+    name: Build Mule application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Java 17
+        # TODO: pin to SHA — gh release view v4 -R actions/setup-java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Configure Maven
+        uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
+        with:
+          # Use the regional nonprod Connected App for Exchange dependency resolution.
+          exchange_client_id: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_ID
+                || secrets.AMER_NONPROD_CLIENT_ID }}
+          exchange_client_secret: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_SECRET
+                || secrets.AMER_NONPROD_CLIENT_SECRET }}
+          github_token: ${{ github.token }}
+
+      - name: Build (skip tests for speed — PR validate already enforces the gate)
+        run: |
+          $MVN package -DskipTests \
+            --no-transfer-progress \
+            --batch-mode
+
+      - name: Upload Mule JAR
+        # TODO: pin to SHA — gh release view v4 -R actions/upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mule-app
+          path: target/*-mule-application.jar
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: Deploy to ${{ inputs.target_env }} (${{ inputs.region }})
+    needs: build
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      # Leave artifact_run_id blank → ch2-deploy defaults to github.run_id,
+      # which is this workflow's run — the JAR was uploaded in the build job above.
+      artifact_run_id: ''
+      bg_id: >-
+        ${{ inputs.region == 'emea'
+            && '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+            || '3d315b55-1b77-40a0-9e6b-301ef87e93d1' }}
+      anypoint_env: ${{ inputs.target_env }}
+      app_name: >-
+        ${{ github.event.repository.name }}-${{ inputs.target_env == 'Design' && 'dev' || 'test' }}
+    secrets:
+      connected_app_client_id: >-
+        ${{ inputs.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: >-
+        ${{ inputs.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      env_client_id: >-
+        ${{ inputs.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      env_client_secret: >-
+        ${{ inputs.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      secure_key: >-
+        ${{ inputs.region == 'emea'
+            && (inputs.target_env == 'Design' && secrets.EMEA_DESIGN_SECURE_KEY || secrets.EMEA_SANDBOX_SECURE_KEY)
+            || (inputs.target_env == 'Design' && secrets.AMER_DESIGN_SECURE_KEY  || secrets.AMER_SANDBOX_SECURE_KEY) }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
