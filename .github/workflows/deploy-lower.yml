@@ -1,13 +1,12 @@
 # Manual lower-environment deploy for pre-merge testing.
 # Run this from any branch (feature or main) to deploy to Design or Sandbox.
-# The app is built from the current branch, uploaded as a workflow artifact,
-# and deployed directly to CloudHub 2.0 — no Exchange publish required.
 #
-# Typical usage:
-#   1. Develop on feature/<ticket>-<desc>
-#   2. Trigger this workflow → Deploy to Design → test
-#   3. If good, trigger again → Deploy to Sandbox → test
-#   4. Open PR → merge to main → deploy.yml handles Production
+# Flow: build → publish to Exchange (root org) → deploy to CloudHub 2.0.
+# Exchange publish uses the deploy-to-exchange-v3 Maven profile. The profile's
+# distributionManagement is overridden in pom.xml to publish to the root org
+# (Exchange requires groupId == root org UUID; child BG IDs are rejected).
+#
+# The unique version (MAJOR.MINOR.run_number) avoids 409 conflicts on re-runs.
 name: Deploy to lower environment
 
 on:
@@ -16,35 +15,29 @@ on:
       target_env:
         description: 'Anypoint environment name (must match Runtime Manager exactly)'
         type: choice
-        options:
-          - Design
-          - Sandbox
+        options: [Design, Sandbox]
         default: Design
         required: true
       region:
         description: 'Deployment region'
         type: choice
-        options:
-          - emea
-          - amer
+        options: [emea, amer]
         default: emea
         required: true
 
 permissions:
   contents: read
   packages: read
-  actions: write   # required to upload the build artifact
 
 jobs:
-  build:
-    name: Build Mule application
+  build-publish-deploy:
+    name: Build → Exchange → CH2 ${{ inputs.target_env }} (${{ inputs.region }})
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Java 17
-        # TODO: pin to SHA — gh release view v4 -R actions/setup-java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -54,7 +47,6 @@ jobs:
       - name: Configure Maven
         uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
         with:
-          # Use the regional nonprod Connected App for Exchange dependency resolution.
           exchange_client_id: >-
             ${{ inputs.region == 'emea'
                 && secrets.EMEA_NONPROD_CLIENT_ID
@@ -65,56 +57,66 @@ jobs:
                 || secrets.AMER_NONPROD_CLIENT_SECRET }}
           github_token: ${{ github.token }}
 
-      - name: Build (skip tests for speed — PR validate already enforces the gate)
+      - name: Set unique version (MAJOR.MINOR.run_number)
+        id: version
         run: |
-          $MVN package -DskipTests \
-            --no-transfer-progress \
-            --batch-mode
+          BASE=$($MVN help:evaluate -Dexpression=project.version -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
+          MAJOR_MINOR=$(echo "${BASE%-SNAPSHOT}" | cut -d. -f1,2)
+          UNIQUE="${MAJOR_MINOR}.${{ github.run_number }}"
+          $MVN versions:set -DnewVersion="${UNIQUE}" \
+            -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
+          echo "version=${UNIQUE}" >> "$GITHUB_OUTPUT"
+          echo "Publishing version: ${UNIQUE}"
 
-      - name: Upload Mule JAR
-        # TODO: pin to SHA — gh release view v4 -R actions/upload-artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mule-app
-          path: target/*-mule-application.jar
-          if-no-files-found: error
-          retention-days: 1
+      - name: Build and publish to Exchange
+        run: |
+          $MVN deploy -P deploy-to-exchange-v3 \
+            --no-transfer-progress --batch-mode
 
-  deploy:
-    name: Deploy to ${{ inputs.target_env }} (${{ inputs.region }})
-    needs: build
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
-    with:
-      artifact_name: mule-app
-      # Leave artifact_run_id blank → ch2-deploy defaults to github.run_id,
-      # which is this workflow's run — the JAR was uploaded in the build job above.
-      artifact_run_id: ''
-      bg_id: >-
-        ${{ inputs.region == 'emea'
-            && '57c5735b-b5cd-474c-b978-c9bdb69fb472'
-            || '3d315b55-1b77-40a0-9e6b-301ef87e93d1' }}
-      anypoint_env: ${{ inputs.target_env }}
-      app_name: >-
-        ${{ github.event.repository.name }}-${{ inputs.target_env == 'Design' && 'dev' || 'test' }}
-    secrets:
-      connected_app_client_id: >-
-        ${{ inputs.region == 'emea'
-            && secrets.EMEA_NONPROD_CLIENT_ID
-            || secrets.AMER_NONPROD_CLIENT_ID }}
-      connected_app_client_secret: >-
-        ${{ inputs.region == 'emea'
-            && secrets.EMEA_NONPROD_CLIENT_SECRET
-            || secrets.AMER_NONPROD_CLIENT_SECRET }}
-      env_client_id: >-
-        ${{ inputs.region == 'emea'
-            && secrets.EMEA_NONPROD_CLIENT_ID
-            || secrets.AMER_NONPROD_CLIENT_ID }}
-      env_client_secret: >-
-        ${{ inputs.region == 'emea'
-            && secrets.EMEA_NONPROD_CLIENT_SECRET
-            || secrets.AMER_NONPROD_CLIENT_SECRET }}
-      secure_key: >-
-        ${{ inputs.region == 'emea'
-            && (inputs.target_env == 'Design' && secrets.EMEA_DESIGN_SECURE_KEY || secrets.EMEA_SANDBOX_SECURE_KEY)
-            || (inputs.target_env == 'Design' && secrets.AMER_DESIGN_SECURE_KEY  || secrets.AMER_SANDBOX_SECURE_KEY) }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Deploy to CloudHub 2.0 — ${{ inputs.target_env }} (${{ inputs.region }})
+        env:
+          CONNECTED_APP_CLIENT_ID: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_ID
+                || secrets.AMER_NONPROD_CLIENT_ID }}
+          CONNECTED_APP_CLIENT_SECRET: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_SECRET
+                || secrets.AMER_NONPROD_CLIENT_SECRET }}
+          ENV_CLIENT_ID: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_ID
+                || secrets.AMER_NONPROD_CLIENT_ID }}
+          ENV_CLIENT_SECRET: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_SECRET
+                || secrets.AMER_NONPROD_CLIENT_SECRET }}
+          SECURE_KEY: >-
+            ${{ inputs.region == 'emea'
+                && (inputs.target_env == 'Design' && secrets.EMEA_DESIGN_SECURE_KEY || secrets.EMEA_SANDBOX_SECURE_KEY)
+                || (inputs.target_env == 'Design' && secrets.AMER_DESIGN_SECURE_KEY  || secrets.AMER_SANDBOX_SECURE_KEY) }}
+          BG_ID: >-
+            ${{ inputs.region == 'emea'
+                && '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+                || '3d315b55-1b77-40a0-9e6b-301ef87e93d1' }}
+          CH2_TARGET: >-
+            ${{ inputs.region == 'emea'
+                && vars.EMEA_CH2_TARGET
+                || vars.AMER_CH2_TARGET }}
+          APP_SUFFIX: ${{ inputs.target_env == 'Design' && 'dev' || 'test' }}
+        run: |
+          $MVN mule:deploy -P ch2 \
+            -Ddeployment.name="${{ github.event.repository.name }}-${APP_SUFFIX}" \
+            -Dbg.id="${BG_ID}" \
+            -Dch2.environment="${{ inputs.target_env }}" \
+            -Dapp.target="${CH2_TARGET}" \
+            -Dapp.replicas="1" \
+            -Dapp.vcores="0.1" \
+            -Dapp.runtime="${{ vars.MULE_RUNTIME || '4.9.0' }}" \
+            -Dconnected.app.client.id="${CONNECTED_APP_CLIENT_ID}" \
+            -Dconnected.app.client.secret="${CONNECTED_APP_CLIENT_SECRET}" \
+            -Denv.client.id="${ENV_CLIENT_ID}" \
+            -Denv.client.secret="${ENV_CLIENT_SECRET}" \
+            -Dsecure.key="${SECURE_KEY}" \
+            --no-transfer-progress --batch-mode

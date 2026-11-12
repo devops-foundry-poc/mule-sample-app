@@ -90,6 +90,12 @@ jobs:
       artifact_run_id: ${{ github.event.workflow_run.id }}
       bg_id: ${{ matrix.bg_id }}
       anypoint_env: 'Production'
+      # CH2 target name from repo variables (Settings → Variables):
+      #   EMEA_CH2_TARGET and AMER_CH2_TARGET
+      ch2_target: >-
+        ${{ matrix.region == 'emea'
+            && vars.EMEA_CH2_TARGET
+            || vars.AMER_CH2_TARGET }}
       app_name: '${{ github.event.repository.name }}'
       replicas: '2'
       vcores: '0.2'
@@ -114,4 +120,4 @@ jobs:
         ${{ matrix.region == 'emea'
             && secrets.EMEA_PROD_SECURE_KEY
             || secrets.AMER_PROD_SECURE_KEY }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}
+      gh_token: ${{ secrets.GITHUB_TOKEN }}
