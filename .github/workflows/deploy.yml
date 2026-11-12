@@ -90,11 +90,12 @@ jobs:
       artifact_run_id: ${{ github.event.workflow_run.id }}
       bg_id: ${{ matrix.bg_id }}
       anypoint_env: 'Production'
-      # TO CONFIRM: replace with the actual CH2 target names from Runtime Manager.
+      # CH2 target name from repo variables (Settings → Variables):
+      #   EMEA_CH2_TARGET and AMER_CH2_TARGET
       ch2_target: >-
         ${{ matrix.region == 'emea'
-            && 'Cloudhub EU West 1'
-            || 'Cloudhub US East 1' }}
+            && vars.EMEA_CH2_TARGET
+            || vars.AMER_CH2_TARGET }}
       app_name: '${{ github.event.repository.name }}'
       replicas: '2'
       vcores: '0.2'
