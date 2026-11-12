@@ -31,5 +31,4 @@ jobs:
     secrets:
       connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
       connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
-      mulesoft_ee_username: ${{ secrets.MULESOFT_EE_USERNAME }}
-      mulesoft_ee_password: ${{ secrets.MULESOFT_EE_PASSWORD }}
+      # mulesoft_ee_username / mulesoft_ee_password — add when EE licence available
