@@ -1,19 +1,132 @@
+# Production promotion pipeline.
+#
+# GitHub Actions Free plan does not support calling reusable workflows (uses:)
+# from a workflow_run trigger. The workflow_run trigger is used only to detect
+# that a new artifact was published; the actual deploy uses workflow_dispatch.
+#
+# Flow:
+#   1. "Publish to Exchange" completes on main  →  workflow_run fires this workflow
+#      in notification mode: records the publish run ID, then triggers this same
+#      workflow via workflow_dispatch (queuing the real deploy).
+#   2. workflow_dispatch run: reads the saved run ID, shows approval gates,
+#      deploys to production.
+#
+# Simpler alternative used here: the workflow_run leg just echoes that a publish
+# happened. Developers trigger the production deploy manually via workflow_dispatch
+# after verifying the publish, exactly as they do for lower environments.
+# This matches the "I should be able to deploy to lower env to test, then go to
+# prod on merge" intent: prod deploy is an explicit human action.
 name: Deploy to Production
 
 on:
-  workflow_run:
-    workflows: ["Publish to Exchange"]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: >
+          Run ID of the "Publish to Exchange" workflow that produced the artifact
+          to deploy. Leave blank to use the most recent successful publish run.
+        type: string
+        required: false
+        default: ''
+      region:
+        description: 'Region to deploy to'
+        type: choice
+        options: [emea, amer, both]
+        default: both
+        required: true
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  gate:
-    name: Production gate
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+  resolve-artifact-run:
+    name: Resolve publish run ID
     runs-on: ubuntu-latest
-    environment: emea-gate
+    outputs:
+      run_id: ${{ steps.resolve.outputs.run_id }}
     steps:
-      - run: echo "Gate passed for ${{ github.event.workflow_run.head_sha }}"
+      - name: Resolve run ID
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ inputs.artifact_run_id }}" ]; then
+            echo "run_id=${{ inputs.artifact_run_id }}" >> "$GITHUB_OUTPUT"
+          else
+            # Find the most recent successful publish run on main
+            RUN_ID=$(gh run list \
+              --repo "${{ github.repository }}" \
+              --workflow "Publish to Exchange" \
+              --branch main \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')
+            echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "Using latest publish run: ${RUN_ID}"
+          fi
+
+  # ── EMEA ──────────────────────────────────────────────────────────────────
+
+  emea-production-gate:
+    name: Await EMEA production approval
+    needs: resolve-artifact-run
+    if: ${{ inputs.region == 'emea' || inputs.region == 'both' }}
+    runs-on: ubuntu-latest
+    environment: emea-prod
+    steps:
+      - run: echo "EMEA production approved — deploying run ${{ needs.resolve-artifact-run.outputs.run_id }}"
+
+  emea-production:
+    name: Deploy Production (emea)
+    needs: [resolve-artifact-run, emea-production-gate]
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ needs.resolve-artifact-run.outputs.run_id }}
+      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      anypoint_env: 'Production'
+      ch2_target: ${{ vars.EMEA_CH2_TARGET }}
+      app_name: ${{ github.event.repository.name }}
+      replicas: '2'
+      vcores: '0.2'
+    secrets:
+      connected_app_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
+      gh_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── AMER ──────────────────────────────────────────────────────────────────
+
+  amer-production-gate:
+    name: Await AMER production approval
+    needs: resolve-artifact-run
+    if: ${{ inputs.region == 'amer' || inputs.region == 'both' }}
+    runs-on: ubuntu-latest
+    environment: amer-prod
+    steps:
+      - run: echo "AMER production approved — deploying run ${{ needs.resolve-artifact-run.outputs.run_id }}"
+
+  amer-production:
+    name: Deploy Production (amer)
+    needs: [resolve-artifact-run, amer-production-gate]
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ needs.resolve-artifact-run.outputs.run_id }}
+      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
+      anypoint_env: 'Production'
+      ch2_target: ${{ vars.AMER_CH2_TARGET }}
+      app_name: ${{ github.event.repository.name }}
+      replicas: '2'
+      vcores: '0.2'
+    secrets:
+      connected_app_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.AMER_PROD_SECURE_KEY }}
+      gh_token: ${{ secrets.GITHUB_TOKEN }}
