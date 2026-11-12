@@ -71,8 +71,10 @@ jobs:
         run: |
           BASE=$($MVN help:evaluate -Dexpression=project.version -q -DforceStdout \
             --no-transfer-progress --batch-mode)
-          RELEASE="${BASE%-SNAPSHOT}"
-          UNIQUE="${RELEASE}-dev.${{ github.run_number }}"
+          # Strip -SNAPSHOT, take MAJOR.MINOR, use run_number as patch.
+          # e.g. 1.0.2-SNAPSHOT → 1.0.42  (pure semver, Exchange-safe)
+          MAJOR_MINOR=$(echo "${BASE%-SNAPSHOT}" | cut -d. -f1,2)
+          UNIQUE="${MAJOR_MINOR}.${{ github.run_number }}"
           $MVN versions:set -DnewVersion="${UNIQUE}" \
             -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
           echo "version=${UNIQUE}" >> "$GITHUB_OUTPUT"
