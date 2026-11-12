@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Local Maven settings for manual testing — NEVER commit filled values.
+  Fill in the REPLACE_ME placeholders, then run from the repo root:
+
+    export MVN="/Users/amanagarwal2/.local/apache-maven-3.8.8/bin/mvn"
+    export JAVA_HOME="/opt/homebrew/Cellar/openjdk@17/17.0.19/libexec/openjdk.jdk/Contents/Home"
+
+    # Test Exchange publish
+    $MVN deploy -P deploy-to-exchange-v3 -s .mvn/local-settings.xml --no-transfer-progress
+
+    # Test CH2 deploy (after Exchange publish succeeds)
+    $MVN mule:deploy -P ch2 -s .mvn/local-settings.xml \
+      -Ddeployment.name=mule-sample-app-dev \
+      -Dbg.id=57c5735b-b5cd-474c-b978-c9bdb69fb472 \
+      -Dch2.environment=Design \
+      -Dapp.target=REPLACE_CH2_TARGET \
+      -Dapp.replicas=1 \
+      -Dapp.vcores=0.1 \
+      -Dapp.runtime=4.9.0 \
+      -Dconnected.app.client.id=REPLACE_EMEA_NONPROD_CLIENT_ID \
+      -Dconnected.app.client.secret=REPLACE_EMEA_NONPROD_CLIENT_SECRET \
+      -Denv.client.id=REPLACE_EMEA_NONPROD_CLIENT_ID \
+      -Denv.client.secret=REPLACE_EMEA_NONPROD_CLIENT_SECRET \
+      -Dsecure.key=dummy \
+      --no-transfer-progress
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <servers>
+    <server>
+      <id>anypoint-exchange-v3</id>
+      <username>~~~Client~~~</username>
+      <!-- REPLACE_ME: format is  <emea_nonprod_client_id>~?~<emea_nonprod_client_secret> -->
+      <password>REPLACE_ME</password>
+    </server>
+    <server>
+      <id>github</id>
+      <username>x-access-token</username>
+      <!-- REPLACE_ME: your GitHub PAT or personal token with packages:read -->
+      <password>REPLACE_ME</password>
+    </server>
+    <server>
+      <id>mulesoft-ee-releases</id>
+      <username>REPLACE_ME</username>
+      <password>REPLACE_ME</password>
+    </server>
+  </servers>
+</settings>
