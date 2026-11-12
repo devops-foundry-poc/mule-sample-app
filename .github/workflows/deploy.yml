@@ -2,27 +2,20 @@
 # Triggered when the "Publish to Exchange" workflow completes successfully on main.
 #
 # ── Region control (repository variables) ────────────────────────────────────
-# Set these in:  this repo → Settings → Secrets and variables → Variables
-#
+# Set in:  this repo → Settings → Secrets and variables → Variables
 #   DEPLOY_EMEA   true | false
 #   DEPLOY_AMER   true | false
 #
+# ── Region config block (the one place to update BG IDs / add new regions) ──
+# Edit the matrix.include entries below. Every deploy stage fans out over
+# this list automatically — no other job needs to be changed.
+#
 # ── Behaviour ────────────────────────────────────────────────────────────────
-#   Both true  → the workflow pauses at approve-emea / approve-amer and waits
-#                for each region's approver team to decide before any deployment
-#                starts for that region.  The two gates run in parallel so the
-#                teams decide independently.
-#   One true   → that region's track starts automatically (no gate).
-#   Both false → all deploy jobs are skipped.
-#
-# ── Gate environments (pre-deployment, both-region mode only) ────────────────
-#   emea-gate  → required reviewer: mule-approvers-emea
-#   amer-gate  → required reviewer: mule-approvers-amer
-#
-# ── Deployment environment gates ─────────────────────────────────────────────
-#   *-dev, *-test  — no approval (auto-promotion through the stages)
-#   emea-prod      — required reviewer: mule-approvers-emea
-#   amer-prod      — required reviewer: mule-approvers-amer
+# Both true  → approve-emea and approve-amer gates run in parallel; each
+#              region's approver team decides independently before that region's
+#              deploy starts.
+# One true   → the approval gate is skipped; that region deploys automatically.
+# Both false → all deploy jobs are skipped.
 name: Deploy
 
 on:
@@ -33,13 +26,23 @@ on:
 
 permissions:
   contents: read
-  actions: read   # required for cross-run artifact download
+  actions: read
+
+# ── Region config ─────────────────────────────────────────────────────────────
+# Shared across all three deploy stages via the matrix.
+# To add a region: add an entry here and create the matching GitHub environments
+# (<region>-dev, <region>-test, <region>-prod) with the appropriate secrets.
+env:
+  REGIONS_MATRIX: >-
+    {"include":[
+      {"region":"emea","bg_id":"57c5735b-b5cd-474c-b978-c9bdb69fb472"},
+      {"region":"amer","bg_id":"3d315b55-1b77-40a0-9e6b-301ef87e93d1"}
+    ]}
 
 jobs:
   # ── Pre-deployment gates ──────────────────────────────────────────────────
-  # These jobs only activate when BOTH regions are enabled.
-  # When only one region is active the gate is skipped and the
-  # downstream track proceeds without waiting.
+  # Active only when BOTH regions are enabled.  The two gates run in parallel
+  # so each approver team makes their decision independently.
 
   approve-emea:
     name: Approve EMEA deployment
@@ -47,7 +50,7 @@ jobs:
       ${{ github.event.workflow_run.conclusion == 'success' &&
           vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
     runs-on: ubuntu-latest
-    environment: emea-gate   # pauses here — mule-approvers-emea must approve
+    environment: emea-gate   # required reviewer: mule-approvers-emea
     steps:
       - run: echo "EMEA deployment approved"
 
@@ -57,150 +60,139 @@ jobs:
       ${{ github.event.workflow_run.conclusion == 'success' &&
           vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
     runs-on: ubuntu-latest
-    environment: amer-gate   # pauses here — mule-approvers-amer must approve
+    environment: amer-gate   # required reviewer: mule-approvers-amer
     steps:
       - run: echo "AMER deployment approved"
 
-  # ════════════════════════════════════════════════════════════════════════════
-  # EMEA track  (Design → Sandbox → Production)
-  # Proceeds automatically when DEPLOY_EMEA=true and DEPLOY_AMER=false.
-  # Waits for approve-emea when both regions are active.
-  # ════════════════════════════════════════════════════════════════════════════
+  # ── Stage 1: Design ───────────────────────────────────────────────────────
+  # Runs a variant per region (matrix).  A region's variant is skipped when
+  # its DEPLOY_* variable is false or its approval gate was rejected.
 
-  emea-design:
-    name: EMEA — Design
-    needs: [approve-emea]
-    # Run when:
-    #   • EMEA is enabled, AND
-    #   • the publish succeeded, AND
-    #   • the gate either approved (both-region) or was skipped (single-region).
+  deploy-design:
+    name: Deploy Design (${{ matrix.region }})
+    needs: [approve-emea, approve-amer]
+    strategy:
+      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      fail-fast: false   # an EMEA failure does not cancel the AMER variant
+    environment: ${{ matrix.region }}-dev
+    # Run this variant when:
+    #   • the region's DEPLOY_* flag is true, AND
+    #   • publish succeeded, AND
+    #   • the region's gate either approved (both-region) or was skipped (single-region).
     if: >-
-      ${{ vars.DEPLOY_EMEA == 'true' &&
-          github.event.workflow_run.conclusion == 'success' &&
-          (needs.approve-emea.result == 'success' ||
-           needs.approve-emea.result == 'skipped') }}
-    environment: emea-dev
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          ((matrix.region == 'emea' && vars.DEPLOY_EMEA == 'true' &&
+            (needs.approve-emea.result == 'success' || needs.approve-emea.result == 'skipped')) ||
+           (matrix.region == 'amer' && vars.DEPLOY_AMER == 'true' &&
+            (needs.approve-amer.result == 'success' || needs.approve-amer.result == 'skipped'))) }}
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
       artifact_name: mule-app
       artifact_run_id: ${{ github.event.workflow_run.id }}
-      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      bg_id: ${{ matrix.bg_id }}
       anypoint_env: 'Design'
       app_name: '${{ github.event.repository.name }}-dev'
     secrets:
-      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.EMEA_DESIGN_SECURE_KEY }}
+      connected_app_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      env_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      env_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      secure_key: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_DESIGN_SECURE_KEY
+            || secrets.AMER_DESIGN_SECURE_KEY }}
       github_token: ${{ secrets.GITHUB_TOKEN }}
 
-  emea-sandbox:
-    name: EMEA — Sandbox
-    needs: emea-design
-    environment: emea-test
+  # ── Stage 2: Sandbox ──────────────────────────────────────────────────────
+
+  deploy-sandbox:
+    name: Deploy Sandbox (${{ matrix.region }})
+    needs: deploy-design
+    strategy:
+      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      fail-fast: false
+    environment: ${{ matrix.region }}-test
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
       artifact_name: mule-app
       artifact_run_id: ${{ github.event.workflow_run.id }}
-      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      bg_id: ${{ matrix.bg_id }}
       anypoint_env: 'Sandbox'
       app_name: '${{ github.event.repository.name }}-test'
     secrets:
-      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.EMEA_SANDBOX_SECURE_KEY }}
+      connected_app_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      env_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      env_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      secure_key: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_SANDBOX_SECURE_KEY
+            || secrets.AMER_SANDBOX_SECURE_KEY }}
       github_token: ${{ secrets.GITHUB_TOKEN }}
 
-  emea-production:
-    name: EMEA — Production
-    needs: emea-sandbox
-    environment: emea-prod   # approval gate: mule-approvers-emea
+  # ── Stage 3: Production ───────────────────────────────────────────────────
+  # Each region's variant waits for its own environment's approval gate
+  # independently — emea-prod approval does not block amer-prod and vice versa.
+
+  deploy-production:
+    name: Deploy Production (${{ matrix.region }})
+    needs: deploy-sandbox
+    strategy:
+      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      fail-fast: false
+    environment: ${{ matrix.region }}-prod   # approval gate per region
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
       artifact_name: mule-app
       artifact_run_id: ${{ github.event.workflow_run.id }}
-      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      bg_id: ${{ matrix.bg_id }}
       anypoint_env: 'Production'
       app_name: '${{ github.event.repository.name }}'
       replicas: '2'
       vcores: '0.2'
     secrets:
-      connected_app_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}
-
-  # ════════════════════════════════════════════════════════════════════════════
-  # AMER track  (Design → Sandbox → Production)
-  # Proceeds automatically when DEPLOY_AMER=true and DEPLOY_EMEA=false.
-  # Waits for approve-amer when both regions are active.
-  # ════════════════════════════════════════════════════════════════════════════
-
-  amer-design:
-    name: AMER — Design
-    needs: [approve-amer]
-    if: >-
-      ${{ vars.DEPLOY_AMER == 'true' &&
-          github.event.workflow_run.conclusion == 'success' &&
-          (needs.approve-amer.result == 'success' ||
-           needs.approve-amer.result == 'skipped') }}
-    environment: amer-dev
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
-    with:
-      artifact_name: mule-app
-      artifact_run_id: ${{ github.event.workflow_run.id }}
-      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
-      anypoint_env: 'Design'
-      app_name: '${{ github.event.repository.name }}-dev'
-    secrets:
-      connected_app_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.AMER_DESIGN_SECURE_KEY }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}
-
-  amer-sandbox:
-    name: AMER — Sandbox
-    needs: amer-design
-    environment: amer-test
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
-    with:
-      artifact_name: mule-app
-      artifact_run_id: ${{ github.event.workflow_run.id }}
-      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
-      anypoint_env: 'Sandbox'
-      app_name: '${{ github.event.repository.name }}-test'
-    secrets:
-      connected_app_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.AMER_SANDBOX_SECURE_KEY }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}
-
-  amer-production:
-    name: AMER — Production
-    needs: amer-sandbox
-    environment: amer-prod   # approval gate: mule-approvers-amer
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
-    with:
-      artifact_name: mule-app
-      artifact_run_id: ${{ github.event.workflow_run.id }}
-      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
-      anypoint_env: 'Production'
-      app_name: '${{ github.event.repository.name }}'
-      replicas: '2'
-      vcores: '0.2'
-    secrets:
-      connected_app_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.AMER_PROD_SECURE_KEY }}
+      connected_app_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_CLIENT_ID
+            || secrets.AMER_PROD_CLIENT_ID }}
+      connected_app_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_CLIENT_SECRET
+            || secrets.AMER_PROD_CLIENT_SECRET }}
+      env_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_CLIENT_ID
+            || secrets.AMER_PROD_CLIENT_ID }}
+      env_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_CLIENT_SECRET
+            || secrets.AMER_PROD_CLIENT_SECRET }}
+      secure_key: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_SECURE_KEY
+            || secrets.AMER_PROD_SECURE_KEY }}
       github_token: ${{ secrets.GITHUB_TOKEN }}
