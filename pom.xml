@@ -60,4 +60,33 @@
     </repository>
   </repositories>
 
+  <!--
+    Adds <target> to the ch2 profile inherited from the parent POM.
+    Maven merges child profiles with the same id; the parent provides all
+    other cloudhub2Deployment fields; this child block contributes <target>.
+    Value is injected by ch2-deploy.yml via -Dapp.target.
+    Remove this block once the parent POM is bumped to 1.0.1+ (which already
+    includes <target>${app.target}</target> in its ch2 profile).
+  -->
+  <profiles>
+    <profile>
+      <id>ch2</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.mule.tools.maven</groupId>
+            <artifactId>mule-maven-plugin</artifactId>
+            <version>${mule-maven-plugin.version}</version>
+            <extensions>true</extensions>
+            <configuration>
+              <cloudhub2Deployment>
+                <target>${app.target}</target>
+              </cloudhub2Deployment>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+
 </project>
