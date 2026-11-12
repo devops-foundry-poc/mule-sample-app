@@ -131,13 +131,18 @@ jobs:
           print(f"Publishing {artifact_id}:{version} to Exchange (root org)")
 
           # ── Publish via Exchange Asset Manager v2 ─────────────────────
-          url = (f"https://anypoint.mulesoft.com/exchange/api/v2/assets"
-                 f"/{root_org_id}/{artifact_id}/{version}")
+          # Correct endpoint: POST /exchange/api/v2/assets (org/assetId/version
+          # are form fields, not URL path parameters).
+          url = "https://anypoint.mulesoft.com/exchange/api/v2/assets"
           r = subprocess.run(
               ["curl", "-s", "-w", "\n%{http_code}", "-X", "POST", url,
                "-H", f"Authorization: Bearer {token}",
-               "-F", f"type=app",
+               "-F", f"organizationId={root_org_id}",
+               "-F", f"groupId={root_org_id}",
+               "-F", f"assetId={artifact_id}",
+               "-F", f"version={version}",
                "-F", f"name={artifact_id}",
+               "-F", f"type=app",
                "-F", f"files[mule-application]=@{jar_path}"],
               capture_output=True, text=True)
           body, http_code = r.stdout.rsplit("\n", 1)
