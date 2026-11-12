@@ -1,0 +1,167 @@
+# Regional promotion pipeline: Design → Sandbox → Production.
+# Triggered when the "Publish to Exchange" workflow completes successfully on main.
+#
+# ── Region selection ──────────────────────────────────────────────────────────
+# Set the repository variable DEPLOY_REGIONS in:
+#   GitHub → this repo → Settings → Secrets and variables → Variables
+# Value: comma-separated list of region keys.
+#   Both regions:  emea,amer
+#   EMEA only:     emea
+#   AMER only:     amer
+#
+# Each region runs as an independent track (Design → Sandbox → Production).
+# A failure in the EMEA track does not affect the AMER track and vice versa.
+#
+# ── Environment gates ────────────────────────────────────────────────────────
+#   *-dev  — no approval required (auto-promotion)
+#   *-test — no approval required (auto-promotion)
+#   *-prod — requires approval from the regional approver team
+#             emea-prod → mule-approvers-emea
+#             amer-prod → mule-approvers-amer
+#
+# ── Prod secrets ─────────────────────────────────────────────────────────────
+# EMEA_PROD_CLIENT_ID/_SECRET and AMER_PROD_CLIENT_ID/_SECRET are wired but
+# unusable until the Anypoint Connected Apps are created and the secrets are
+# populated in org secrets.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Publish to Exchange"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read   # required for cross-run artifact download
+
+jobs:
+  # ════════════════════════════════════════════════════════════════════════════
+  # EMEA  track  (active when DEPLOY_REGIONS contains 'emea')
+  # ════════════════════════════════════════════════════════════════════════════
+
+  emea-design:
+    name: EMEA — Design
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          contains(vars.DEPLOY_REGIONS, 'emea') }}
+    environment: emea-dev
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      anypoint_env: 'Design'
+      app_name: '${{ github.event.repository.name }}-dev'
+    secrets:
+      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.EMEA_DESIGN_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  emea-sandbox:
+    name: EMEA — Sandbox
+    needs: emea-design
+    environment: emea-test
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      anypoint_env: 'Sandbox'
+      app_name: '${{ github.event.repository.name }}-test'
+    secrets:
+      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.EMEA_SANDBOX_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  emea-production:
+    name: EMEA — Production
+    needs: emea-sandbox
+    environment: emea-prod   # approval gate: mule-approvers-emea
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      anypoint_env: 'Production'
+      app_name: '${{ github.event.repository.name }}'
+      replicas: '2'
+      vcores: '0.2'
+    secrets:
+      connected_app_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # AMER  track  (active when DEPLOY_REGIONS contains 'amer')
+  # ════════════════════════════════════════════════════════════════════════════
+
+  amer-design:
+    name: AMER — Design
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          contains(vars.DEPLOY_REGIONS, 'amer') }}
+    environment: amer-dev
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
+      anypoint_env: 'Design'
+      app_name: '${{ github.event.repository.name }}-dev'
+    secrets:
+      connected_app_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.AMER_DESIGN_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  amer-sandbox:
+    name: AMER — Sandbox
+    needs: amer-design
+    environment: amer-test
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
+      anypoint_env: 'Sandbox'
+      app_name: '${{ github.event.repository.name }}-test'
+    secrets:
+      connected_app_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.AMER_SANDBOX_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  amer-production:
+    name: AMER — Production
+    needs: amer-sandbox
+    environment: amer-prod   # approval gate: mule-approvers-amer
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
+      anypoint_env: 'Production'
+      app_name: '${{ github.event.repository.name }}'
+      replicas: '2'
+      vcores: '0.2'
+    secrets:
+      connected_app_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
+      secure_key: ${{ secrets.AMER_PROD_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
