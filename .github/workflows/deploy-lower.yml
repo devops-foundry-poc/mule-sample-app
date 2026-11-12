@@ -94,6 +94,13 @@ jobs:
             && '57c5735b-b5cd-474c-b978-c9bdb69fb472'
             || '3d315b55-1b77-40a0-9e6b-301ef87e93d1' }}
       anypoint_env: ${{ inputs.target_env }}
+      # TO CONFIRM: replace with the actual CloudHub 2.0 target name from
+      # Anypoint Runtime Manager → CloudHub 2.0 → Target column.
+      # EMEA example: "Cloudhub EU West 1"  AMER example: "Cloudhub US East 1"
+      ch2_target: >-
+        ${{ inputs.region == 'emea'
+            && 'Cloudhub EU West 1'
+            || 'Cloudhub US East 1' }}
       app_name: >-
         ${{ github.event.repository.name }}-${{ inputs.target_env == 'Design' && 'dev' || 'test' }}
     secrets:
