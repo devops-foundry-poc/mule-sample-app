@@ -1,38 +1,79 @@
+# Production pipeline: build → Exchange publish → Production deploy.
+# Triggered on every merge to main.
+#
+# Approval gates on production environments (emea-prod / amer-prod) pause
+# the deploy until the regional approver team clicks Approve.
+# EMEA and AMER run in parallel and gate independently.
+#
+# Version: MAJOR.MINOR.run_number — unique per run, no 409 conflicts.
+# Region control: vars.DEPLOY_EMEA and vars.DEPLOY_AMER (true | false).
 name: Deploy to Production
 
 on:
-  workflow_run:
-    workflows: ["Publish to Exchange"]
-    types: [completed]
+  push:
     branches: [main]
 
 permissions:
   contents: read
-  actions: read
+  packages: read
+  actions: write   # for artifact upload
 
 jobs:
-  approve-emea:
-    name: Approve EMEA production deployment
-    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
+  build-and-publish:
+    name: Build → Exchange
     runs-on: ubuntu-latest
-    environment: emea-gate
-    steps:
-      - run: echo "EMEA approved"
 
-  approve-amer:
-    name: Approve AMER production deployment
-    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
-    runs-on: ubuntu-latest
-    environment: amer-gate
     steps:
-      - run: echo "AMER approved"
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Configure Maven
+        uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
+        with:
+          exchange_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+          exchange_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+          github_token: ${{ github.token }}
+
+      - name: Set release version (MAJOR.MINOR.run_number)
+        id: version
+        run: |
+          BASE=$($MVN help:evaluate -Dexpression=project.version -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
+          MAJOR_MINOR=$(echo "${BASE%-SNAPSHOT}" | cut -d. -f1,2)
+          VERSION="${MAJOR_MINOR}.${{ github.run_number }}"
+          $MVN versions:set -DnewVersion="${VERSION}" \
+            -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing: ${VERSION}"
+
+      - name: Build and publish to Exchange
+        run: |
+          $MVN deploy -P deploy-to-exchange-v3 \
+            --no-transfer-progress --batch-mode
+
+      - name: Upload Mule JAR for binary promotion
+        uses: actions/upload-artifact@v4
+        with:
+          name: mule-app
+          path: target/*-mule-application.jar
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── EMEA: approval gate → deploy ─────────────────────────────────────────
 
   emea-production-gate:
     name: Await EMEA production approval
-    needs: [approve-emea, approve-amer]
-    if: ${{ vars.DEPLOY_EMEA == 'true' && github.event.workflow_run.conclusion == 'success' && (needs.approve-emea.result == 'success' || needs.approve-emea.result == 'skipped') }}
+    needs: build-and-publish
+    if: ${{ vars.DEPLOY_EMEA == 'true' }}
     runs-on: ubuntu-latest
-    environment: emea-prod
+    environment: emea-prod   # required reviewer: mule-approvers-emea
     steps:
       - run: echo "EMEA production approved"
 
@@ -42,7 +83,7 @@ jobs:
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
       artifact_name: mule-app
-      artifact_run_id: ${{ github.event.workflow_run.id }}
+      artifact_run_id: ''
       bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
       anypoint_env: 'Production'
       ch2_target: ${{ vars.EMEA_CH2_TARGET }}
@@ -57,12 +98,14 @@ jobs:
       secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
       gh_token: ${{ secrets.GITHUB_TOKEN }}
 
+  # ── AMER: approval gate → deploy ─────────────────────────────────────────
+
   amer-production-gate:
     name: Await AMER production approval
-    needs: [approve-emea, approve-amer]
-    if: ${{ vars.DEPLOY_AMER == 'true' && github.event.workflow_run.conclusion == 'success' && (needs.approve-amer.result == 'success' || needs.approve-amer.result == 'skipped') }}
+    needs: build-and-publish
+    if: ${{ vars.DEPLOY_AMER == 'true' }}
     runs-on: ubuntu-latest
-    environment: amer-prod
+    environment: amer-prod   # required reviewer: mule-approvers-amer
     steps:
       - run: echo "AMER production approved"
 
@@ -72,7 +115,7 @@ jobs:
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
       artifact_name: mule-app
-      artifact_run_id: ${{ github.event.workflow_run.id }}
+      artifact_run_id: ''
       bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
       anypoint_env: 'Production'
       ch2_target: ${{ vars.AMER_CH2_TARGET }}
