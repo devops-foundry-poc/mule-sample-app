@@ -114,4 +114,4 @@ jobs:
         ${{ matrix.region == 'emea'
             && secrets.EMEA_PROD_SECURE_KEY
             || secrets.AMER_PROD_SECURE_KEY }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}
+      gh_token: ${{ secrets.GITHUB_TOKEN }}

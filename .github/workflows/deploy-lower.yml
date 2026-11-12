@@ -117,4 +117,4 @@ jobs:
         ${{ inputs.region == 'emea'
             && (inputs.target_env == 'Design' && secrets.EMEA_DESIGN_SECURE_KEY || secrets.EMEA_SANDBOX_SECURE_KEY)
             || (inputs.target_env == 'Design' && secrets.AMER_DESIGN_SECURE_KEY  || secrets.AMER_SANDBOX_SECURE_KEY) }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}
+      gh_token: ${{ secrets.GITHUB_TOKEN }}
