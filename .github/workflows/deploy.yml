@@ -1,21 +1,24 @@
 # Regional promotion pipeline: Design → Sandbox → Production.
 # Triggered when the "Publish to Exchange" workflow completes successfully on main.
 #
+# GitHub Actions does not allow `environment:` on a `uses:` (reusable workflow) job.
+# Production approval gates are handled by a thin gate job (runs-on + environment)
+# that chains into the reusable deploy job.
+#
 # ── Region control (repository variables) ────────────────────────────────────
 # Set in:  this repo → Settings → Secrets and variables → Variables
 #   DEPLOY_EMEA   true | false
 #   DEPLOY_AMER   true | false
 #
-# ── Region config block (the one place to update BG IDs / add new regions) ──
-# Edit the matrix.include entries below. Every deploy stage fans out over
-# this list automatically — no other job needs to be changed.
+# ── Region config block ───────────────────────────────────────────────────────
+# Edit REGIONS_MATRIX to add/remove regions or update BG IDs.
+# Every stage fans out over it automatically.
 #
 # ── Behaviour ────────────────────────────────────────────────────────────────
-# Both true  → approve-emea and approve-amer gates run in parallel; each
-#              region's approver team decides independently before that region's
-#              deploy starts.
-# One true   → the approval gate is skipped; that region deploys automatically.
-# Both false → all deploy jobs are skipped.
+# Both true  → approve-emea / approve-amer gates run in parallel; each team
+#              decides independently before that region's deploy starts.
+# One true   → that region deploys automatically (gate is skipped).
+# Both false → all jobs are skipped.
 name: Deploy
 
 on:
@@ -28,10 +31,6 @@ permissions:
   contents: read
   actions: read
 
-# ── Region config ─────────────────────────────────────────────────────────────
-# Shared across all three deploy stages via the matrix.
-# To add a region: add an entry here and create the matching GitHub environments
-# (<region>-dev, <region>-test, <region>-prod) with the appropriate secrets.
 env:
   REGIONS_MATRIX: >-
     {"include":[
@@ -40,9 +39,7 @@ env:
     ]}
 
 jobs:
-  # ── Pre-deployment gates ──────────────────────────────────────────────────
-  # Active only when BOTH regions are enabled.  The two gates run in parallel
-  # so each approver team makes their decision independently.
+  # ── Pre-deployment gates (both-region mode only) ──────────────────────────
 
   approve-emea:
     name: Approve EMEA deployment
@@ -65,20 +62,15 @@ jobs:
       - run: echo "AMER deployment approved"
 
   # ── Stage 1: Design ───────────────────────────────────────────────────────
-  # Runs a variant per region (matrix).  A region's variant is skipped when
-  # its DEPLOY_* variable is false or its approval gate was rejected.
 
   deploy-design:
     name: Deploy Design (${{ matrix.region }})
     needs: [approve-emea, approve-amer]
     strategy:
       matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
-      fail-fast: false   # an EMEA failure does not cancel the AMER variant
-    environment: ${{ matrix.region }}-dev
-    # Run this variant when:
-    #   • the region's DEPLOY_* flag is true, AND
-    #   • publish succeeded, AND
-    #   • the region's gate either approved (both-region) or was skipped (single-region).
+      fail-fast: false
+    # No environment: here — environment on uses: is not supported by GitHub Actions.
+    # Design has no approval gate; it auto-proceeds after the pre-deploy gate.
     if: >-
       ${{ github.event.workflow_run.conclusion == 'success' &&
           ((matrix.region == 'emea' && vars.DEPLOY_EMEA == 'true' &&
@@ -123,7 +115,6 @@ jobs:
     strategy:
       matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
       fail-fast: false
-    environment: ${{ matrix.region }}-test
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
       artifact_name: mule-app
@@ -154,17 +145,28 @@ jobs:
             || secrets.AMER_SANDBOX_SECURE_KEY }}
       github_token: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── Stage 3: Production ───────────────────────────────────────────────────
-  # Each region's variant waits for its own environment's approval gate
-  # independently — emea-prod approval does not block amer-prod and vice versa.
+  # ── Stage 3: Production — gate job holds the approval, deploy job runs after ──
+  # Split into two because environment: cannot be used on a uses: job.
+  # The gate job (runs-on) holds the environment and its approval rules.
+  # The deploy job (uses:) runs after the gate is approved.
 
-  deploy-production:
-    name: Deploy Production (${{ matrix.region }})
+  deploy-production-gate:
+    name: Await production approval (${{ matrix.region }})
     needs: deploy-sandbox
+    runs-on: ubuntu-latest
     strategy:
       matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
       fail-fast: false
-    environment: ${{ matrix.region }}-prod   # approval gate per region
+    environment: ${{ matrix.region }}-prod   # approval gate: mule-approvers-emea/amer
+    steps:
+      - run: echo "Production deployment approved for ${{ matrix.region }}"
+
+  deploy-production:
+    name: Deploy Production (${{ matrix.region }})
+    needs: deploy-production-gate
+    strategy:
+      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      fail-fast: false
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
       artifact_name: mule-app
