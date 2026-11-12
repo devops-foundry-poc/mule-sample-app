@@ -80,10 +80,68 @@ jobs:
           echo "version=${UNIQUE}" >> "$GITHUB_OUTPUT"
           echo "Publishing version: ${UNIQUE}"
 
-      - name: Publish to Exchange
+      - name: Publish to Exchange via REST API
+        # exchange-mule-maven-plugin consistently returns 500 on exchange-eof.
+        # Publish directly via the Exchange Asset Manager v2 REST API instead.
+        # Secrets are read from env vars (Python os.environ) — not shell-expanded.
+        env:
+          EXCHANGE_CLIENT_ID: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_ID
+                || secrets.AMER_NONPROD_CLIENT_ID }}
+          EXCHANGE_CLIENT_SECRET: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_SECRET
+                || secrets.AMER_NONPROD_CLIENT_SECRET }}
         run: |
-          $MVN deploy -P deploy-to-exchange-v3 \
-            --no-transfer-progress --batch-mode
+          python3 - << 'PYEOF'
+          import os, subprocess, json, glob, sys
+
+          client_id     = os.environ["EXCHANGE_CLIENT_ID"]
+          client_secret = os.environ["EXCHANGE_CLIENT_SECRET"]
+          root_org_id   = "427b3435-71d5-43d2-95a8-5c2a683d97a8"
+
+          # ── Get access token ──────────────────────────────────────────
+          r = subprocess.run(
+              ["curl", "-s", "-X", "POST",
+               "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/token",
+               "-d", f"grant_type=client_credentials"
+                     f"&client_id={client_id}&client_secret={client_secret}"],
+              capture_output=True, text=True, check=True)
+          token = json.loads(r.stdout)["access_token"]
+
+          # ── Find built JAR ────────────────────────────────────────────
+          jars = glob.glob("target/*-mule-application.jar")
+          if not jars:
+              print("ERROR: no mule-application JAR in target/", file=sys.stderr)
+              sys.exit(1)
+          jar_path = jars[0]
+
+          # ── Read version from pom.xml ─────────────────────────────────
+          import xml.etree.ElementTree as ET
+          tree = ET.parse("pom.xml")
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          version = tree.getroot().find("m:version", ns).text
+          artifact_id = tree.getroot().find("m:artifactId", ns).text
+          print(f"Publishing {artifact_id}:{version} to Exchange (root org)")
+
+          # ── Publish via Exchange Asset Manager v2 ─────────────────────
+          url = (f"https://anypoint.mulesoft.com/exchange/api/v2/assets"
+                 f"/{root_org_id}/{artifact_id}/{version}")
+          r = subprocess.run(
+              ["curl", "-s", "-w", "\n%{http_code}", "-X", "POST", url,
+               "-H", f"Authorization: Bearer {token}",
+               "-F", f"type=app",
+               "-F", f"name={artifact_id}",
+               "-F", f"files[mule-application]=@{jar_path}"],
+              capture_output=True, text=True)
+          body, http_code = r.stdout.rsplit("\n", 1)
+          print(f"HTTP {http_code}: {body[:400]}")
+          if http_code not in ("200", "201"):
+              print(f"Exchange publish failed (HTTP {http_code})", file=sys.stderr)
+              sys.exit(1)
+          print("Published to Exchange successfully")
+          PYEOF
 
       - name: Deploy to CloudHub 2.0 — ${{ inputs.target_env }} (${{ inputs.region }})
         env:
