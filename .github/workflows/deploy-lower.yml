@@ -1,16 +1,12 @@
 # Manual lower-environment deploy for pre-merge testing.
 # Run this from any branch (feature or main) to deploy to Design or Sandbox.
 #
-# CloudHub 2.0 requires the application to exist in Anypoint Exchange before
-# it can be deployed. This workflow: builds → publishes to Exchange with a
-# unique version (base.run_number) → deploys to CH2.
-# The unique version avoids 409 conflicts on repeated runs from the same branch.
+# Flow: build → publish to Exchange (root org) → deploy to CloudHub 2.0.
+# Exchange publish uses the deploy-to-exchange-v3 Maven profile. The profile's
+# distributionManagement is overridden in pom.xml to publish to the root org
+# (Exchange requires groupId == root org UUID; child BG IDs are rejected).
 #
-# Typical usage:
-#   1. Develop on feature/<ticket>-<desc>
-#   2. Trigger this workflow → Deploy to Design → test
-#   3. If good, trigger again → Deploy to Sandbox → test
-#   4. Open PR → merge to main → deploy.yml handles Production
+# The unique version (MAJOR.MINOR.run_number) avoids 409 conflicts on re-runs.
 name: Deploy to lower environment
 
 on:
@@ -19,17 +15,13 @@ on:
       target_env:
         description: 'Anypoint environment name (must match Runtime Manager exactly)'
         type: choice
-        options:
-          - Design
-          - Sandbox
+        options: [Design, Sandbox]
         default: Design
         required: true
       region:
         description: 'Deployment region'
         type: choice
-        options:
-          - emea
-          - amer
+        options: [emea, amer]
         default: emea
         required: true
 
@@ -46,7 +38,6 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Java 17
-        # TODO: pin to SHA — gh release view v4 -R actions/setup-java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -66,13 +57,11 @@ jobs:
                 || secrets.AMER_NONPROD_CLIENT_SECRET }}
           github_token: ${{ github.token }}
 
-      - name: Set unique version (base.run_number to avoid Exchange 409)
+      - name: Set unique version (MAJOR.MINOR.run_number)
         id: version
         run: |
           BASE=$($MVN help:evaluate -Dexpression=project.version -q -DforceStdout \
             --no-transfer-progress --batch-mode)
-          # Strip -SNAPSHOT, take MAJOR.MINOR, use run_number as patch.
-          # e.g. 1.0.2-SNAPSHOT → 1.0.42  (pure semver, Exchange-safe)
           MAJOR_MINOR=$(echo "${BASE%-SNAPSHOT}" | cut -d. -f1,2)
           UNIQUE="${MAJOR_MINOR}.${{ github.run_number }}"
           $MVN versions:set -DnewVersion="${UNIQUE}" \
@@ -80,78 +69,10 @@ jobs:
           echo "version=${UNIQUE}" >> "$GITHUB_OUTPUT"
           echo "Publishing version: ${UNIQUE}"
 
-      - name: Build Mule application JAR
+      - name: Build and publish to Exchange
         run: |
-          $MVN package -DskipTests \
+          $MVN deploy -P deploy-to-exchange-v3 \
             --no-transfer-progress --batch-mode
-
-      - name: Publish to Exchange via REST API
-        # exchange-mule-maven-plugin consistently returns 500 on exchange-eof.
-        # Publish directly via the Exchange Asset Manager v2 REST API instead.
-        # Secrets are read from env vars (Python os.environ) — not shell-expanded.
-        env:
-          EXCHANGE_CLIENT_ID: >-
-            ${{ inputs.region == 'emea'
-                && secrets.EMEA_NONPROD_CLIENT_ID
-                || secrets.AMER_NONPROD_CLIENT_ID }}
-          EXCHANGE_CLIENT_SECRET: >-
-            ${{ inputs.region == 'emea'
-                && secrets.EMEA_NONPROD_CLIENT_SECRET
-                || secrets.AMER_NONPROD_CLIENT_SECRET }}
-        run: |
-          python3 - << 'PYEOF'
-          import os, subprocess, json, glob, sys
-
-          client_id     = os.environ["EXCHANGE_CLIENT_ID"]
-          client_secret = os.environ["EXCHANGE_CLIENT_SECRET"]
-          root_org_id   = "427b3435-71d5-43d2-95a8-5c2a683d97a8"
-
-          # ── Get access token ──────────────────────────────────────────
-          r = subprocess.run(
-              ["curl", "-s", "-X", "POST",
-               "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/token",
-               "-d", f"grant_type=client_credentials"
-                     f"&client_id={client_id}&client_secret={client_secret}"],
-              capture_output=True, text=True, check=True)
-          token = json.loads(r.stdout)["access_token"]
-
-          # ── Find built JAR ────────────────────────────────────────────
-          jars = glob.glob("target/*-mule-application.jar")
-          if not jars:
-              print("ERROR: no mule-application JAR in target/", file=sys.stderr)
-              sys.exit(1)
-          jar_path = jars[0]
-
-          # ── Read version from pom.xml ─────────────────────────────────
-          import xml.etree.ElementTree as ET
-          tree = ET.parse("pom.xml")
-          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
-          version = tree.getroot().find("m:version", ns).text
-          artifact_id = tree.getroot().find("m:artifactId", ns).text
-          print(f"Publishing {artifact_id}:{version} to Exchange (root org)")
-
-          # ── Publish via Exchange Asset Manager v2 ─────────────────────
-          # Correct endpoint: POST /exchange/api/v2/assets (org/assetId/version
-          # are form fields, not URL path parameters).
-          url = "https://anypoint.mulesoft.com/exchange/api/v2/assets"
-          r = subprocess.run(
-              ["curl", "-s", "-w", "\n%{http_code}", "-X", "POST", url,
-               "-H", f"Authorization: Bearer {token}",
-               "-F", f"organizationId={root_org_id}",
-               "-F", f"groupId={root_org_id}",
-               "-F", f"assetId={artifact_id}",
-               "-F", f"version={version}",
-               "-F", f"name={artifact_id}",
-               "-F", f"type=app",
-               "-F", f"files[mule-application]=@{jar_path}"],
-              capture_output=True, text=True)
-          body, http_code = r.stdout.rsplit("\n", 1)
-          print(f"HTTP {http_code}: {body[:400]}")
-          if http_code not in ("200", "201"):
-              print(f"Exchange publish failed (HTTP {http_code})", file=sys.stderr)
-              sys.exit(1)
-          print("Published to Exchange successfully")
-          PYEOF
 
       - name: Deploy to CloudHub 2.0 — ${{ inputs.target_env }} (${{ inputs.region }})
         env:
