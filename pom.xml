@@ -61,4 +61,25 @@
   </repositories>
 
 
+  <!--
+    Override the deploy-to-exchange-v3 profile's distributionManagement to
+    publish to the ROOT org Exchange (427b3435). The EMEA BG Exchange (57c5735b)
+    consistently returns HTTP 500 on the exchange-eof finalization step, which
+    seems to indicate Exchange publishing is only supported at root-org level
+    on this Anypoint account.
+    CH2 deployment is unaffected — it uses -Dbg.id from the workflow, not groupId.
+  -->
+  <profiles>
+    <profile>
+      <id>deploy-to-exchange-v3</id>
+      <distributionManagement>
+        <repository>
+          <id>anypoint-exchange-v3</id>
+          <name>Anypoint Exchange V3 — root org</name>
+          <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/427b3435-71d5-43d2-95a8-5c2a683d97a8/maven</url>
+        </repository>
+      </distributionManagement>
+    </profile>
+  </profiles>
+
 </project>
