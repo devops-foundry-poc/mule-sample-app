@@ -54,13 +54,16 @@ jobs:
           cache: maven
 
       - name: Configure Maven
-        # Use SHARED_ASSETS credentials for Exchange publish — those are the only
-        # Connected App credentials confirmed to have Exchange Contributor scope.
-        # EMEA/AMER_NONPROD credentials are used only for the CH2 deploy step.
         uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
         with:
-          exchange_client_id: ${{ secrets.SHARED_ASSETS_CLIENT_ID }}
-          exchange_client_secret: ${{ secrets.SHARED_ASSETS_CLIENT_SECRET }}
+          exchange_client_id: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_ID
+                || secrets.AMER_NONPROD_CLIENT_ID }}
+          exchange_client_secret: >-
+            ${{ inputs.region == 'emea'
+                && secrets.EMEA_NONPROD_CLIENT_SECRET
+                || secrets.AMER_NONPROD_CLIENT_SECRET }}
           github_token: ${{ github.token }}
 
       - name: Set unique version (base.run_number to avoid Exchange 409)
@@ -78,13 +81,14 @@ jobs:
           echo "Publishing version: ${UNIQUE}"
 
       - name: Publish to Exchange
-        # Publish to the ROOT org Exchange (where SHARED_ASSETS credentials have
-        # Exchange Contributor scope). Child BGs (EMEA/AMER) inherit Exchange assets
-        # from the parent, so CH2 can still resolve the artifact for deployment.
-        # Publishing directly to a child BG's Exchange returns 500 on exchange-eof.
+        env:
+          BG_ID: >-
+            ${{ inputs.region == 'emea'
+                && '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+                || '3d315b55-1b77-40a0-9e6b-301ef87e93d1' }}
         run: |
           $MVN deploy -P deploy-to-exchange-v3 \
-            -DorganizationId="427b3435-71d5-43d2-95a8-5c2a683d97a8" \
+            -DorganizationId="${BG_ID}" \
             --no-transfer-progress --batch-mode
 
       - name: Deploy to CloudHub 2.0 — ${{ inputs.target_env }} (${{ inputs.region }})
