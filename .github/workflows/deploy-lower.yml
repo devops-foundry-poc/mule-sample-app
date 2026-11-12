@@ -80,15 +80,10 @@ jobs:
           echo "version=${UNIQUE}" >> "$GITHUB_OUTPUT"
           echo "Publishing version: ${UNIQUE}"
 
-      - name: Publish to Exchange
-        env:
-          BG_ID: >-
-            ${{ inputs.region == 'emea'
-                && '57c5735b-b5cd-474c-b978-c9bdb69fb472'
-                || '3d315b55-1b77-40a0-9e6b-301ef87e93d1' }}
+      - name: Publish to Exchange (root org — child BG returns 500 on EOF)
         run: |
           $MVN deploy -P deploy-to-exchange-v3 \
-            -DorganizationId="${BG_ID}" \
+            -DorganizationId="427b3435-71d5-43d2-95a8-5c2a683d97a8" \
             --no-transfer-progress --batch-mode
 
       - name: Deploy to CloudHub 2.0 — ${{ inputs.target_env }} (${{ inputs.region }})
