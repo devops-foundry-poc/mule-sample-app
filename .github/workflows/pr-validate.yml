@@ -1,0 +1,25 @@
+# Runs on every pull request to main.
+# Calls the org-level pr-validate reusable workflow (build + MUnit 80 % gate).
+#
+# Security: pull_request trigger — secrets are available for same-repo PRs
+# (feature/* branches in this org); fork PRs receive no secrets and will fail
+# the Exchange resolve step intentionally (no pull_request_target used).
+name: PR Validate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  validate:
+    name: Build + MUnit
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/pr-validate.yml@main
+    secrets:
+      # Use shared-assets connected app for Exchange resolution (parent POM + connectors).
+      exchange_client_id: ${{ secrets.SHARED_ASSETS_CLIENT_ID }}
+      exchange_client_secret: ${{ secrets.SHARED_ASSETS_CLIENT_SECRET }}
+      # mulesoft_ee_username / mulesoft_ee_password — add when EE licence available

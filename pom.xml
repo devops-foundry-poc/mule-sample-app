@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>427b3435-71d5-43d2-95a8-5c2a683d97a8</groupId>
+    <artifactId>mule-shared-assets-pom</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <!--
+    groupId = EMEA Business Group ID.
+    Controls which Anypoint BG the Exchange asset lands in when the
+    deploy-to-exchange-v3 profile is activated.
+    CloudHub 2.0 deployment target BG is overridden per region via
+    -Dbg.id in the ch2-deploy.yml workflow (not derived from this groupId).
+  -->
+  <groupId>57c5735b-b5cd-474c-b978-c9bdb69fb472</groupId>
+  <artifactId>mule-sample-app</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>mule-application</packaging>
+  <name>Mule Sample App</name>
+  <description>
+    Minimal Mule 4 application used to validate the CI/CD pipeline end-to-end:
+    PR validate → Exchange publish → CloudHub 2.0 deploy (Design → Sandbox → Production).
+  </description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.mule.connectors</groupId>
+      <artifactId>mule-http-connector</artifactId>
+      <classifier>mule-plugin</classifier>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.mule.tools.maven</groupId>
+        <artifactId>mule-maven-plugin</artifactId>
+        <extensions>true</extensions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <!--
+    GitHub Packages: resolves the parent POM (mule-shared-assets-pom).
+    Exchange Maven facade v3 does not accept packaging=pom, so the parent
+    POM is published to GitHub Packages instead.
+    Auth: a <server id="github"> entry in settings.xml with GITHUB_TOKEN.
+  -->
+  <repositories>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages — mule-shared-assets</name>
+      <url>https://maven.pkg.github.com/devops-foundry-poc/mule-shared-assets</url>
+    </repository>
+  </repositories>
+
+</project>

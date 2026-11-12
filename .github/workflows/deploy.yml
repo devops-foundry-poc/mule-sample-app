@@ -1,0 +1,200 @@
+# Regional promotion pipeline: Design → Sandbox → Production.
+# Triggered when the "Publish to Exchange" workflow completes successfully on main.
+#
+# GitHub Actions does not allow `environment:` on a `uses:` (reusable workflow) job.
+# Production approval gates are handled by a thin gate job (runs-on + environment)
+# that chains into the reusable deploy job.
+#
+# ── Region control (repository variables) ────────────────────────────────────
+# Set in:  this repo → Settings → Secrets and variables → Variables
+#   DEPLOY_EMEA   true | false
+#   DEPLOY_AMER   true | false
+#
+# ── Region config block ───────────────────────────────────────────────────────
+# Edit REGIONS_MATRIX to add/remove regions or update BG IDs.
+# Every stage fans out over it automatically.
+#
+# ── Behaviour ────────────────────────────────────────────────────────────────
+# Both true  → approve-emea / approve-amer gates run in parallel; each team
+#              decides independently before that region's deploy starts.
+# One true   → that region deploys automatically (gate is skipped).
+# Both false → all jobs are skipped.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Publish to Exchange"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REGIONS_MATRIX: >-
+    {"include":[
+      {"region":"emea","bg_id":"57c5735b-b5cd-474c-b978-c9bdb69fb472"},
+      {"region":"amer","bg_id":"3d315b55-1b77-40a0-9e6b-301ef87e93d1"}
+    ]}
+
+jobs:
+  # ── Pre-deployment gates (both-region mode only) ──────────────────────────
+
+  approve-emea:
+    name: Approve EMEA deployment
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
+    runs-on: ubuntu-latest
+    environment: emea-gate   # required reviewer: mule-approvers-emea
+    steps:
+      - run: echo "EMEA deployment approved"
+
+  approve-amer:
+    name: Approve AMER deployment
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
+    runs-on: ubuntu-latest
+    environment: amer-gate   # required reviewer: mule-approvers-amer
+    steps:
+      - run: echo "AMER deployment approved"
+
+  # ── Stage 1: Design ───────────────────────────────────────────────────────
+
+  deploy-design:
+    name: Deploy Design (${{ matrix.region }})
+    needs: [approve-emea, approve-amer]
+    strategy:
+      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      fail-fast: false
+    # No environment: here — environment on uses: is not supported by GitHub Actions.
+    # Design has no approval gate; it auto-proceeds after the pre-deploy gate.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          ((matrix.region == 'emea' && vars.DEPLOY_EMEA == 'true' &&
+            (needs.approve-emea.result == 'success' || needs.approve-emea.result == 'skipped')) ||
+           (matrix.region == 'amer' && vars.DEPLOY_AMER == 'true' &&
+            (needs.approve-amer.result == 'success' || needs.approve-amer.result == 'skipped'))) }}
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: ${{ matrix.bg_id }}
+      anypoint_env: 'Design'
+      app_name: '${{ github.event.repository.name }}-dev'
+    secrets:
+      connected_app_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      env_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      env_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      secure_key: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_DESIGN_SECURE_KEY
+            || secrets.AMER_DESIGN_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Stage 2: Sandbox ──────────────────────────────────────────────────────
+
+  deploy-sandbox:
+    name: Deploy Sandbox (${{ matrix.region }})
+    needs: deploy-design
+    strategy:
+      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      fail-fast: false
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: ${{ matrix.bg_id }}
+      anypoint_env: 'Sandbox'
+      app_name: '${{ github.event.repository.name }}-test'
+    secrets:
+      connected_app_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      env_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_ID
+            || secrets.AMER_NONPROD_CLIENT_ID }}
+      env_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_NONPROD_CLIENT_SECRET
+            || secrets.AMER_NONPROD_CLIENT_SECRET }}
+      secure_key: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_SANDBOX_SECURE_KEY
+            || secrets.AMER_SANDBOX_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Stage 3: Production — gate job holds the approval, deploy job runs after ──
+  # Split into two because environment: cannot be used on a uses: job.
+  # The gate job (runs-on) holds the environment and its approval rules.
+  # The deploy job (uses:) runs after the gate is approved.
+
+  deploy-production-gate:
+    name: Await production approval (${{ matrix.region }})
+    needs: deploy-sandbox
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      fail-fast: false
+    environment: ${{ matrix.region }}-prod   # approval gate: mule-approvers-emea/amer
+    steps:
+      - run: echo "Production deployment approved for ${{ matrix.region }}"
+
+  deploy-production:
+    name: Deploy Production (${{ matrix.region }})
+    needs: deploy-production-gate
+    strategy:
+      matrix: ${{ fromJson(env.REGIONS_MATRIX) }}
+      fail-fast: false
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
+    with:
+      artifact_name: mule-app
+      artifact_run_id: ${{ github.event.workflow_run.id }}
+      bg_id: ${{ matrix.bg_id }}
+      anypoint_env: 'Production'
+      app_name: '${{ github.event.repository.name }}'
+      replicas: '2'
+      vcores: '0.2'
+    secrets:
+      connected_app_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_CLIENT_ID
+            || secrets.AMER_PROD_CLIENT_ID }}
+      connected_app_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_CLIENT_SECRET
+            || secrets.AMER_PROD_CLIENT_SECRET }}
+      env_client_id: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_CLIENT_ID
+            || secrets.AMER_PROD_CLIENT_ID }}
+      env_client_secret: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_CLIENT_SECRET
+            || secrets.AMER_PROD_CLIENT_SECRET }}
+      secure_key: >-
+        ${{ matrix.region == 'emea'
+            && secrets.EMEA_PROD_SECURE_KEY
+            || secrets.AMER_PROD_SECURE_KEY }}
+      github_token: ${{ secrets.GITHUB_TOKEN }}
