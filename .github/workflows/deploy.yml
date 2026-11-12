@@ -1,19 +1,3 @@
-# Production promotion pipeline.
-# Triggered automatically when the "Publish to Exchange" workflow completes
-# successfully on main.  Design and Sandbox deploys are handled separately
-# via deploy-lower.yml (workflow_dispatch).
-#
-# ── Region control (repository variables) ────────────────────────────────────
-#   DEPLOY_EMEA   true | false
-#   DEPLOY_AMER   true | false
-#
-# ── Behaviour ────────────────────────────────────────────────────────────────
-# Both true  → approve-emea and approve-amer gates run in parallel.
-# One true   → that region's gate is skipped; deploy proceeds automatically.
-# Both false → all jobs are skipped.
-#
-# NOTE: Explicit per-region jobs are used (not matrix) to avoid GitHub Actions
-# restrictions on matrix-uses-job depending on another matrix job.
 name: Deploy to Production
 
 on:
@@ -27,37 +11,26 @@ permissions:
   actions: read
 
 jobs:
-  # ── Pre-production gates (both-region mode only) ──────────────────────────
-
   approve-emea:
     name: Approve EMEA production deployment
-    if: >-
-      ${{ github.event.workflow_run.conclusion == 'success' &&
-          vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
     runs-on: ubuntu-latest
     environment: emea-gate
     steps:
-      - run: echo "EMEA production deployment approved"
+      - run: echo "EMEA approved"
 
   approve-amer:
     name: Approve AMER production deployment
-    if: >-
-      ${{ github.event.workflow_run.conclusion == 'success' &&
-          vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.DEPLOY_EMEA == 'true' && vars.DEPLOY_AMER == 'true' }}
     runs-on: ubuntu-latest
     environment: amer-gate
     steps:
-      - run: echo "AMER production deployment approved"
-
-  # ── EMEA: Production gate → deploy ───────────────────────────────────────
+      - run: echo "AMER approved"
 
   emea-production-gate:
     name: Await EMEA production approval
     needs: [approve-emea, approve-amer]
-    if: >-
-      ${{ vars.DEPLOY_EMEA == 'true' &&
-          github.event.workflow_run.conclusion == 'success' &&
-          (needs.approve-emea.result == 'success' || needs.approve-emea.result == 'skipped') }}
+    if: ${{ vars.DEPLOY_EMEA == 'true' && github.event.workflow_run.conclusion == 'success' && (needs.approve-emea.result == 'success' || needs.approve-emea.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: emea-prod
     steps:
@@ -73,7 +46,7 @@ jobs:
       bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
       anypoint_env: 'Production'
       ch2_target: ${{ vars.EMEA_CH2_TARGET }}
-      app_name: '${{ github.event.repository.name }}'
+      app_name: ${{ github.event.repository.name }}
       replicas: '2'
       vcores: '0.2'
     secrets:
@@ -84,15 +57,10 @@ jobs:
       secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
       gh_token: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── AMER: Production gate → deploy ───────────────────────────────────────
-
   amer-production-gate:
     name: Await AMER production approval
     needs: [approve-emea, approve-amer]
-    if: >-
-      ${{ vars.DEPLOY_AMER == 'true' &&
-          github.event.workflow_run.conclusion == 'success' &&
-          (needs.approve-amer.result == 'success' || needs.approve-amer.result == 'skipped') }}
+    if: ${{ vars.DEPLOY_AMER == 'true' && github.event.workflow_run.conclusion == 'success' && (needs.approve-amer.result == 'success' || needs.approve-amer.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: amer-prod
     steps:
@@ -108,7 +76,7 @@ jobs:
       bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
       anypoint_env: 'Production'
       ch2_target: ${{ vars.AMER_CH2_TARGET }}
-      app_name: '${{ github.event.repository.name }}'
+      app_name: ${{ github.event.repository.name }}
       replicas: '2'
       vcores: '0.2'
     secrets:
