@@ -12,13 +12,12 @@
   </parent>
 
   <!--
-    groupId = EMEA Business Group ID.
-    Controls which Anypoint BG the Exchange asset lands in when the
-    deploy-to-exchange-v3 profile is activated.
-    CloudHub 2.0 deployment target BG is overridden per region via
-    -Dbg.id in the ch2-deploy.yml workflow (not derived from this groupId).
+    groupId = root org UUID (required by Exchange when publishing).
+    Exchange rejects child BG UUIDs as groupId — the root org UUID must be used.
+    CloudHub 2.0 deployment target BG is specified per region via
+    -Dbg.id in the ch2-deploy.yml workflow, independent of this groupId.
   -->
-  <groupId>57c5735b-b5cd-474c-b978-c9bdb69fb472</groupId>
+  <groupId>427b3435-71d5-43d2-95a8-5c2a683d97a8</groupId>
   <artifactId>mule-sample-app</artifactId>
   <version>1.0.2-SNAPSHOT</version>
   <packaging>mule-application</packaging>
