@@ -54,16 +54,13 @@ jobs:
           cache: maven
 
       - name: Configure Maven
+        # Use SHARED_ASSETS credentials for Exchange publish — those are the only
+        # Connected App credentials confirmed to have Exchange Contributor scope.
+        # EMEA/AMER_NONPROD credentials are used only for the CH2 deploy step.
         uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
         with:
-          exchange_client_id: >-
-            ${{ inputs.region == 'emea'
-                && secrets.EMEA_NONPROD_CLIENT_ID
-                || secrets.AMER_NONPROD_CLIENT_ID }}
-          exchange_client_secret: >-
-            ${{ inputs.region == 'emea'
-                && secrets.EMEA_NONPROD_CLIENT_SECRET
-                || secrets.AMER_NONPROD_CLIENT_SECRET }}
+          exchange_client_id: ${{ secrets.SHARED_ASSETS_CLIENT_ID }}
+          exchange_client_secret: ${{ secrets.SHARED_ASSETS_CLIENT_SECRET }}
           github_token: ${{ github.token }}
 
       - name: Set unique version (base.run_number to avoid Exchange 409)
