@@ -1,13 +1,12 @@
-# Production pipeline: approval → Exchange publish → CH2 deploy (per region).
+# Production pipeline: approval → Exchange publish → CH2 deploy (EMEA).
 # Triggered on every merge to main.
 #
-# The approval gate fires BEFORE Exchange publish so the regional approver team
-# decides whether this release should be published and deployed to their region
-# at all. No artifact reaches Exchange without an explicit approval.
+# EMEA-only for now (DEPLOY_AMER=false). The pom.xml groupId is already the
+# EMEA BG UUID (57c5735b) — no groupId change is needed before Exchange publish.
 #
-# Region control:  vars.DEPLOY_EMEA  and  vars.DEPLOY_AMER  (true | false)
-# Region BG IDs:   vars.EMEA_BG_ID   and  vars.AMER_BG_ID   (org-level variables)
-# CH2 targets:     vars.EMEA_CH2_TARGET and vars.AMER_CH2_TARGET
+# Region control:  vars.DEPLOY_EMEA  (true | false)
+# Region BG IDs:   vars.EMEA_BG_ID   (org-level variable)
+# CH2 target:      vars.EMEA_CH2_TARGET
 name: Deploy to Production
 
 on:
@@ -26,21 +25,58 @@ jobs:
     name: Approve EMEA release
     if: ${{ vars.DEPLOY_EMEA == 'true' }}
     runs-on: ubuntu-latest
-    environment: emea-gate   # required reviewer: mule-approvers-emea
+    environment: emea-gate
     steps:
-      - run: echo "EMEA release approved — proceeding to Exchange publish and deploy"
+      - run: echo "EMEA release approved"
 
   publish-emea:
-    name: Publish to Exchange (EMEA)
+    name: Build → Exchange (EMEA)
     needs: emea-approve
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/exchange-publish-regional.yml@main
-    with:
-      region_bg_id: ${{ vars.EMEA_BG_ID }}
-      artifact_name: mule-app-emea
-    secrets:
-      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
-      gh_token: ${{ secrets.GITHUB_TOKEN }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Configure Maven
+        uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
+        with:
+          exchange_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+          exchange_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+          github_token: ${{ github.token }}
+
+      - name: Set release version (MAJOR.MINOR.run_number)
+        id: version
+        run: |
+          BASE=$($MVN help:evaluate -Dexpression=project.version -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
+          MAJOR_MINOR=$(echo "${BASE%-SNAPSHOT}" | cut -d. -f1,2)
+          VERSION="${MAJOR_MINOR}.${{ github.run_number }}"
+          $MVN versions:set -DnewVersion="${VERSION}" \
+            -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing: ${VERSION} to EMEA Exchange (${{ vars.EMEA_BG_ID }})"
+
+      - name: Publish to Exchange (EMEA BG)
+        run: |
+          # pom.xml groupId is already the EMEA BG UUID — no change needed.
+          $MVN deploy -P deploy-to-exchange-v3 \
+            -DexchangeGroupId=${{ vars.EMEA_BG_ID }} \
+            --no-transfer-progress --batch-mode
+
+      - name: Upload Mule JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: mule-app-emea
+          path: target/*-mule-application.jar
+          if-no-files-found: error
+          retention-days: 7
 
   emea-production:
     name: Deploy Production (EMEA)
@@ -61,47 +97,4 @@ jobs:
       env_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
       env_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
       secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
-      gh_token: ${{ secrets.GITHUB_TOKEN }}
-
-  # ── AMER: approval → publish → deploy ────────────────────────────────────
-
-  amer-approve:
-    name: Approve AMER release
-    if: ${{ vars.DEPLOY_AMER == 'true' }}
-    runs-on: ubuntu-latest
-    environment: amer-gate   # required reviewer: mule-approvers-amer
-    steps:
-      - run: echo "AMER release approved — proceeding to Exchange publish and deploy"
-
-  publish-amer:
-    name: Publish to Exchange (AMER)
-    needs: amer-approve
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/exchange-publish-regional.yml@main
-    with:
-      region_bg_id: ${{ vars.AMER_BG_ID }}
-      artifact_name: mule-app-amer
-    secrets:
-      connected_app_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
-      gh_token: ${{ secrets.GITHUB_TOKEN }}
-
-  amer-production:
-    name: Deploy Production (AMER)
-    needs: publish-amer
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
-    with:
-      artifact_name: mule-app-amer
-      artifact_run_id: ''
-      bg_id: ${{ vars.AMER_BG_ID }}
-      anypoint_env: 'Production'
-      ch2_target: ${{ vars.AMER_CH2_TARGET }}
-      app_name: ${{ github.event.repository.name }}
-      replicas: '2'
-      vcores: '0.2'
-    secrets:
-      connected_app_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.AMER_PROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.AMER_PROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.AMER_PROD_SECURE_KEY }}
       gh_token: ${{ secrets.GITHUB_TOKEN }}
