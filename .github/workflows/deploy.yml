@@ -53,17 +53,15 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Publishing version: ${VERSION}"
 
-      - name: Publish to EMEA Exchange (57c5735b)
+      - name: Publish to EMEA Exchange
         if: ${{ vars.DEPLOY_EMEA == 'true' }}
         run: |
-          # groupId must match the BG UUID so CH2 can look up the asset.
-          # -DexchangeGroupId overrides the distributionManagement URL org.
+          # pom.xml groupId is already the EMEA BG ID — publish directly.
           $MVN deploy -P deploy-to-exchange-v3 \
-            -Dproject.groupId=${{ vars.EMEA_BG_ID }} \
             -DexchangeGroupId=${{ vars.EMEA_BG_ID }} \
             --no-transfer-progress --batch-mode
 
-      - name: Reconfigure Maven (AMER credentials — Exchange Contributor on AMER BG)
+      - name: Reconfigure Maven (AMER credentials)
         if: ${{ vars.DEPLOY_AMER == 'true' }}
         uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
         with:
@@ -71,13 +69,17 @@ jobs:
           exchange_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
           github_token: ${{ github.token }}
 
-      - name: Publish to AMER Exchange (3d315b55)
+      - name: Publish to AMER Exchange
         if: ${{ vars.DEPLOY_AMER == 'true' }}
         run: |
+          # Change pom.xml groupId to AMER BG so Exchange asset lands under 3d315b55.
+          # -Dproject.groupId does NOT override <groupId> in pom.xml — must edit in-place.
+          sed -i "s|<groupId>${{ vars.EMEA_BG_ID }}</groupId>|<groupId>${{ vars.AMER_BG_ID }}</groupId>|" pom.xml
           $MVN deploy -P deploy-to-exchange-v3 \
-            -Dproject.groupId=${{ vars.AMER_BG_ID }} \
             -DexchangeGroupId=${{ vars.AMER_BG_ID }} \
             --no-transfer-progress --batch-mode
+          # Restore EMEA groupId (not strictly needed — runner discards the workspace)
+          sed -i "s|<groupId>${{ vars.AMER_BG_ID }}</groupId>|<groupId>${{ vars.EMEA_BG_ID }}</groupId>|" pom.xml
 
       - name: Upload Mule JAR for binary promotion
         uses: actions/upload-artifact@v4
