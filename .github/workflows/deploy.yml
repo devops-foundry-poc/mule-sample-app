@@ -59,8 +59,8 @@ jobs:
           # groupId must match the BG UUID so CH2 can look up the asset.
           # -DexchangeGroupId overrides the distributionManagement URL org.
           $MVN deploy -P deploy-to-exchange-v3 \
-            -Dproject.groupId="57c5735b-b5cd-474c-b978-c9bdb69fb472" \
-            -DexchangeGroupId="57c5735b-b5cd-474c-b978-c9bdb69fb472" \
+            -Dproject.groupId=${{ vars.EMEA_BG_ID }} \
+            -DexchangeGroupId=${{ vars.EMEA_BG_ID }} \
             --no-transfer-progress --batch-mode
 
       - name: Reconfigure Maven (AMER credentials — Exchange Contributor on AMER BG)
@@ -75,8 +75,8 @@ jobs:
         if: ${{ vars.DEPLOY_AMER == 'true' }}
         run: |
           $MVN deploy -P deploy-to-exchange-v3 \
-            -Dproject.groupId="3d315b55-1b77-40a0-9e6b-301ef87e93d1" \
-            -DexchangeGroupId="3d315b55-1b77-40a0-9e6b-301ef87e93d1" \
+            -Dproject.groupId=${{ vars.AMER_BG_ID }} \
+            -DexchangeGroupId=${{ vars.AMER_BG_ID }} \
             --no-transfer-progress --batch-mode
 
       - name: Upload Mule JAR for binary promotion
@@ -105,7 +105,7 @@ jobs:
     with:
       artifact_name: mule-app
       artifact_run_id: ''
-      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      bg_id: ${{ vars.EMEA_BG_ID }}
       anypoint_env: 'Production'
       ch2_target: ${{ vars.EMEA_CH2_TARGET }}
       app_name: ${{ github.event.repository.name }}
@@ -137,7 +137,7 @@ jobs:
     with:
       artifact_name: mule-app
       artifact_run_id: ''
-      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
+      bg_id: ${{ vars.AMER_BG_ID }}
       anypoint_env: 'Production'
       ch2_target: ${{ vars.AMER_CH2_TARGET }}
       app_name: ${{ github.event.repository.name }}
