@@ -1,9 +1,9 @@
-# Production pipeline: build → Exchange publish → Production deploy.
+# Production pipeline: build → Exchange publish (per region) → Production deploy.
 # Triggered on every merge to main.
 #
-# Approval gates on production environments (emea-prod / amer-prod) pause
-# the deploy until the regional approver team clicks Approve.
-# EMEA and AMER run in parallel and gate independently.
+# Exchange asset groupId MUST match the deployment businessGroupId for CH2
+# to find the asset. This workflow publishes twice — once per enabled region —
+# using the regional BG UUID as the publish organization.
 #
 # Version: MAJOR.MINOR.run_number — unique per run, no 409 conflicts.
 # Region control: vars.DEPLOY_EMEA and vars.DEPLOY_AMER (true | false).
@@ -16,11 +16,11 @@ on:
 permissions:
   contents: read
   packages: read
-  actions: write   # for artifact upload
+  actions: write
 
 jobs:
   build-and-publish:
-    name: Build → Exchange
+    name: Build → Exchange (all enabled regions)
     runs-on: ubuntu-latest
 
     steps:
@@ -34,7 +34,7 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Configure Maven
+      - name: Configure Maven (EMEA credentials — Exchange Contributor on EMEA BG)
         uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
         with:
           exchange_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
@@ -51,11 +51,32 @@ jobs:
           $MVN versions:set -DnewVersion="${VERSION}" \
             -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Publishing: ${VERSION}"
+          echo "Publishing version: ${VERSION}"
 
-      - name: Build and publish to Exchange
+      - name: Publish to EMEA Exchange (57c5735b)
+        if: ${{ vars.DEPLOY_EMEA == 'true' }}
+        run: |
+          # groupId must match the BG UUID so CH2 can look up the asset.
+          # -DexchangeGroupId overrides the distributionManagement URL org.
+          $MVN deploy -P deploy-to-exchange-v3 \
+            -Dproject.groupId=${{ vars.EMEA_BG_ID }} \
+            -DexchangeGroupId=${{ vars.EMEA_BG_ID }} \
+            --no-transfer-progress --batch-mode
+
+      - name: Reconfigure Maven (AMER credentials — Exchange Contributor on AMER BG)
+        if: ${{ vars.DEPLOY_AMER == 'true' }}
+        uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
+        with:
+          exchange_client_id: ${{ secrets.AMER_NONPROD_CLIENT_ID }}
+          exchange_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
+          github_token: ${{ github.token }}
+
+      - name: Publish to AMER Exchange (3d315b55)
+        if: ${{ vars.DEPLOY_AMER == 'true' }}
         run: |
           $MVN deploy -P deploy-to-exchange-v3 \
+            -Dproject.groupId=${{ vars.AMER_BG_ID }} \
+            -DexchangeGroupId=${{ vars.AMER_BG_ID }} \
             --no-transfer-progress --batch-mode
 
       - name: Upload Mule JAR for binary promotion
@@ -73,7 +94,7 @@ jobs:
     needs: build-and-publish
     if: ${{ vars.DEPLOY_EMEA == 'true' }}
     runs-on: ubuntu-latest
-    environment: emea-prod   # required reviewer: mule-approvers-emea
+    environment: emea-prod
     steps:
       - run: echo "EMEA production approved"
 
@@ -84,7 +105,7 @@ jobs:
     with:
       artifact_name: mule-app
       artifact_run_id: ''
-      bg_id: '57c5735b-b5cd-474c-b978-c9bdb69fb472'
+      bg_id: ${{ vars.EMEA_BG_ID }}
       anypoint_env: 'Production'
       ch2_target: ${{ vars.EMEA_CH2_TARGET }}
       app_name: ${{ github.event.repository.name }}
@@ -105,7 +126,7 @@ jobs:
     needs: build-and-publish
     if: ${{ vars.DEPLOY_AMER == 'true' }}
     runs-on: ubuntu-latest
-    environment: amer-prod   # required reviewer: mule-approvers-amer
+    environment: amer-prod
     steps:
       - run: echo "AMER production approved"
 
@@ -116,7 +137,7 @@ jobs:
     with:
       artifact_name: mule-app
       artifact_run_id: ''
-      bg_id: '3d315b55-1b77-40a0-9e6b-301ef87e93d1'
+      bg_id: ${{ vars.AMER_BG_ID }}
       anypoint_env: 'Production'
       ch2_target: ${{ vars.AMER_CH2_TARGET }}
       app_name: ${{ github.event.repository.name }}

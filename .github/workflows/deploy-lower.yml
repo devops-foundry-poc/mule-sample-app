@@ -98,8 +98,8 @@ jobs:
                 || (inputs.target_env == 'Design' && secrets.AMER_DESIGN_SECURE_KEY  || secrets.AMER_SANDBOX_SECURE_KEY) }}
           BG_ID: >-
             ${{ inputs.region == 'emea'
-                && '57c5735b-b5cd-474c-b978-c9bdb69fb472'
-                || '3d315b55-1b77-40a0-9e6b-301ef87e93d1' }}
+                && vars.EMEA_BG_ID
+                || vars.AMER_BG_ID }}
           CH2_TARGET: >-
             ${{ inputs.region == 'emea'
                 && vars.EMEA_CH2_TARGET

@@ -8,24 +8,36 @@
   <parent>
     <groupId>427b3435-71d5-43d2-95a8-5c2a683d97a8</groupId>
     <artifactId>mule-shared-assets-pom</artifactId>
-    <version>1.0.3</version>
+    <version>1.0.4</version>
   </parent>
 
   <!--
-    groupId = root org UUID (required by Exchange when publishing).
-    Exchange rejects child BG UUIDs as groupId — the root org UUID must be used.
-    CloudHub 2.0 deployment target BG is specified per region via
-    -Dbg.id in the ch2-deploy.yml workflow, independent of this groupId.
+    groupId = target Anypoint BG UUID for Exchange publishing.
+    The CH2 deployment lookup uses this groupId to find the asset in Exchange.
+    Deploy-time overridden per region via -Dproject.groupId or by using a
+    separate Maven invocation per region (see deploy.yml).
+
+    For the primary (EMEA) publish, this is the EMEA BG ID.
+    The deploy.yml workflow overrides groupId per region when publishing.
   -->
-  <groupId>427b3435-71d5-43d2-95a8-5c2a683d97a8</groupId>
+  <groupId>57c5735b-b5cd-474c-b978-c9bdb69fb472</groupId>
   <artifactId>mule-sample-app</artifactId>
-  <version>1.3.0-SNAPSHOT</version>
+  <version>1.4.0-SNAPSHOT</version>
   <packaging>mule-application</packaging>
   <name>Mule Sample App</name>
   <description>
     Minimal Mule 4 application used to validate the CI/CD pipeline end-to-end:
-    PR validate → Exchange publish → CloudHub 2.0 deploy (Design → Sandbox → Production).
+    PR validate → Exchange publish (per region) → CloudHub 2.0 deploy.
   </description>
+
+  <properties>
+    <!--
+      Exchange organisation to publish to. Overridden per region in the
+      deploy workflow via -DexchangeGroupId=<bg-uuid>.
+      Parent POM distributionManagement uses ${exchangeGroupId}/maven.
+    -->
+    <exchangeGroupId>${project.groupId}</exchangeGroupId>
+  </properties>
 
   <dependencies>
     <dependency>
@@ -45,12 +57,6 @@
     </plugins>
   </build>
 
-  <!--
-    GitHub Packages: resolves the parent POM (mule-shared-assets-pom).
-    Exchange Maven facade v3 does not accept packaging=pom, so the parent
-    POM is published to GitHub Packages instead.
-    Auth: a <server id="github"> entry in settings.xml with GITHUB_TOKEN.
-  -->
   <repositories>
     <repository>
       <id>github</id>
@@ -58,27 +64,5 @@
       <url>https://maven.pkg.github.com/devops-foundry-poc/mule-shared-assets</url>
     </repository>
   </repositories>
-
-
-  <!--
-    Override the deploy-to-exchange-v3 profile's distributionManagement to
-    publish to the ROOT org Exchange (427b3435). The EMEA BG Exchange (57c5735b)
-    consistently returns HTTP 500 on the exchange-eof finalization step, which
-    seems to indicate Exchange publishing is only supported at root-org level
-    on this Anypoint account.
-    CH2 deployment is unaffected — it uses -Dbg.id from the workflow, not groupId.
-  -->
-  <profiles>
-    <profile>
-      <id>deploy-to-exchange-v3</id>
-      <distributionManagement>
-        <repository>
-          <id>anypoint-exchange-v3</id>
-          <name>Anypoint Exchange V3 — root org</name>
-          <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/427b3435-71d5-43d2-95a8-5c2a683d97a8/maven</url>
-        </repository>
-      </distributionManagement>
-    </profile>
-  </profiles>
 
 </project>
