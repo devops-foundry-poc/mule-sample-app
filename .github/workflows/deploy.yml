@@ -1,8 +1,8 @@
-# Production pipeline: approval → Exchange publish → CH2 deploy (EMEA).
-# Triggered on every merge to main.
-#
-# EMEA-only for now (DEPLOY_AMER=false). The pom.xml groupId is already the
-# EMEA BG UUID (57c5735b) — no groupId change is needed before Exchange publish.
+# Production pipeline: approval → build+Exchange publish+CH2 deploy (EMEA).
+# All three steps run in ONE JOB so the pom.xml release version set during
+# the build is visible to the mule:deploy step.
+# (If publish and deploy were in separate jobs, the deploy job would check
+# out fresh code with the SNAPSHOT version, causing Exchange lookup 404.)
 #
 # Region control:  vars.DEPLOY_EMEA  (true | false)
 # Region BG IDs:   vars.EMEA_BG_ID   (org-level variable)
@@ -19,7 +19,7 @@ permissions:
   actions: write
 
 jobs:
-  # ── EMEA: approval → publish → deploy ────────────────────────────────────
+  # ── EMEA: approval gate ───────────────────────────────────────────────────
 
   emea-approve:
     name: Approve EMEA release
@@ -29,8 +29,10 @@ jobs:
     steps:
       - run: echo "EMEA release approved"
 
-  publish-emea:
-    name: Build → Exchange (EMEA)
+  # ── EMEA: build → Exchange publish → CH2 deploy (single job) ─────────────
+
+  emea-deploy:
+    name: Build → Exchange → CH2 Production (EMEA)
     needs: emea-approve
     runs-on: ubuntu-latest
     steps:
@@ -44,7 +46,7 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Configure Maven
+      - name: Configure Maven (EMEA credentials)
         uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
         with:
           exchange_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
@@ -61,43 +63,38 @@ jobs:
           $MVN versions:set -DnewVersion="${VERSION}" \
             -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Publishing: ${VERSION} to EMEA Exchange (${{ vars.EMEA_BG_ID }})"
+          echo "Release version: ${VERSION}"
 
-      - name: Publish to Exchange (EMEA BG)
+      - name: Build and publish to EMEA Exchange
         run: |
-          # pom.xml groupId is already the EMEA BG UUID — no change needed.
           $MVN deploy -P deploy-to-exchange-v3 \
             -DexchangeGroupId=${{ vars.EMEA_BG_ID }} \
             --no-transfer-progress --batch-mode
 
-      - name: Upload Mule JAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: mule-app-emea
-          path: target/*-mule-application.jar
-          if-no-files-found: error
-          retention-days: 7
+      - name: Deploy to CloudHub 2.0 — EMEA Production
+        env:
+          CONNECTED_APP_CLIENT_ID: ${{ secrets.EMEA_PROD_CLIENT_ID }}
+          CONNECTED_APP_CLIENT_SECRET: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+          ENV_CLIENT_ID: ${{ secrets.EMEA_PROD_CLIENT_ID }}
+          ENV_CLIENT_SECRET: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+          SECURE_KEY: ${{ secrets.EMEA_PROD_SECURE_KEY }}
+        run: |
+          # Find the built JAR
+          JAR=$(find target -name "*-mule-application.jar" | head -1)
+          echo "Deploying: ${JAR}"
 
-  emea-production:
-    name: Deploy Production (EMEA)
-    needs: publish-emea
-    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
-    with:
-      artifact_name: mule-app-emea
-      artifact_run_id: ''
-      bg_id: ${{ vars.EMEA_BG_ID }}
-      anypoint_env: 'Production'
-      ch2_target: ${{ vars.EMEA_CH2_TARGET }}
-      app_name: ${{ github.event.repository.name }}
-      replicas: '2'
-      vcores: '0.2'
-    secrets:
-      # TODO: switch back to EMEA_PROD_CLIENT_ID once Exchange Viewer scope
-      # is confirmed on the prod Connected App for the EMEA BG.
-      # Using NONPROD temporarily to confirm the pipeline works end-to-end.
-      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
-      secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
-      gh_token: ${{ secrets.GITHUB_TOKEN }}
+          $MVN mule:deploy -P ch2 \
+            -Ddeployment.name="${{ github.event.repository.name }}" \
+            -Dbg.id=${{ vars.EMEA_BG_ID }} \
+            -Dch2.environment="Production" \
+            -Dapp.target=${{ vars.EMEA_CH2_TARGET }} \
+            -Dapp.replicas="2" \
+            -Dapp.vcores="0.2" \
+            -Dapp.runtime="${{ vars.MULE_RUNTIME || '4.9.0' }}" \
+            -Dconnected.app.client.id="${CONNECTED_APP_CLIENT_ID}" \
+            -Dconnected.app.client.secret="${CONNECTED_APP_CLIENT_SECRET}" \
+            -Denv.client.id="${ENV_CLIENT_ID}" \
+            -Denv.client.secret="${ENV_CLIENT_SECRET}" \
+            -Dsecure.key="${SECURE_KEY}" \
+            -Dmule.artifact="${JAR}" \
+            --no-transfer-progress --batch-mode
