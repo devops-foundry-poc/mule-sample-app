@@ -1,15 +1,13 @@
-# Production pipeline: Exchange publish (per region) → approval gate → CH2 deploy.
+# Production pipeline: approval → Exchange publish → CH2 deploy (per region).
 # Triggered on every merge to main.
+#
+# The approval gate fires BEFORE Exchange publish so the regional approver team
+# decides whether this release should be published and deployed to their region
+# at all. No artifact reaches Exchange without an explicit approval.
 #
 # Region control:  vars.DEPLOY_EMEA  and  vars.DEPLOY_AMER  (true | false)
 # Region BG IDs:   vars.EMEA_BG_ID   and  vars.AMER_BG_ID   (org-level variables)
 # CH2 targets:     vars.EMEA_CH2_TARGET and vars.AMER_CH2_TARGET
-#
-# Each enabled region:
-#   1. Publishes to Exchange under the regional BG UUID
-#      (exchange-publish-regional.yml handles the groupId alignment internally)
-#   2. Waits for the regional approver team on the production environment
-#   3. Deploys to CloudHub 2.0
 name: Deploy to Production
 
 on:
@@ -22,11 +20,19 @@ permissions:
   actions: write
 
 jobs:
-  # ── EMEA: publish → approval → deploy ────────────────────────────────────
+  # ── EMEA: approval → publish → deploy ────────────────────────────────────
+
+  emea-approve:
+    name: Approve EMEA release
+    if: ${{ vars.DEPLOY_EMEA == 'true' }}
+    runs-on: ubuntu-latest
+    environment: emea-gate   # required reviewer: mule-approvers-emea
+    steps:
+      - run: echo "EMEA release approved — proceeding to Exchange publish and deploy"
 
   publish-emea:
     name: Publish to Exchange (EMEA)
-    if: ${{ vars.DEPLOY_EMEA == 'true' }}
+    needs: emea-approve
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/exchange-publish-regional.yml@main
     with:
       region_bg_id: ${{ vars.EMEA_BG_ID }}
@@ -36,17 +42,9 @@ jobs:
       connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
       gh_token: ${{ secrets.GITHUB_TOKEN }}
 
-  emea-production-gate:
-    name: Await EMEA production approval
-    needs: publish-emea
-    runs-on: ubuntu-latest
-    environment: emea-prod
-    steps:
-      - run: echo "EMEA production approved"
-
   emea-production:
     name: Deploy Production (EMEA)
-    needs: emea-production-gate
+    needs: publish-emea
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
       artifact_name: mule-app-emea
@@ -65,11 +63,19 @@ jobs:
       secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
       gh_token: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── AMER: publish → approval → deploy ────────────────────────────────────
+  # ── AMER: approval → publish → deploy ────────────────────────────────────
+
+  amer-approve:
+    name: Approve AMER release
+    if: ${{ vars.DEPLOY_AMER == 'true' }}
+    runs-on: ubuntu-latest
+    environment: amer-gate   # required reviewer: mule-approvers-amer
+    steps:
+      - run: echo "AMER release approved — proceeding to Exchange publish and deploy"
 
   publish-amer:
     name: Publish to Exchange (AMER)
-    if: ${{ vars.DEPLOY_AMER == 'true' }}
+    needs: amer-approve
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/exchange-publish-regional.yml@main
     with:
       region_bg_id: ${{ vars.AMER_BG_ID }}
@@ -79,17 +85,9 @@ jobs:
       connected_app_client_secret: ${{ secrets.AMER_NONPROD_CLIENT_SECRET }}
       gh_token: ${{ secrets.GITHUB_TOKEN }}
 
-  amer-production-gate:
-    name: Await AMER production approval
-    needs: publish-amer
-    runs-on: ubuntu-latest
-    environment: amer-prod
-    steps:
-      - run: echo "AMER production approved"
-
   amer-production:
     name: Deploy Production (AMER)
-    needs: amer-production-gate
+    needs: publish-amer
     uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/ch2-deploy.yml@main
     with:
       artifact_name: mule-app-amer
