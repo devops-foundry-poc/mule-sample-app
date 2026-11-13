@@ -12,13 +12,9 @@
   </parent>
 
   <!--
-    groupId = target Anypoint BG UUID for Exchange publishing.
-    The CH2 deployment lookup uses this groupId to find the asset in Exchange.
-    Deploy-time overridden per region via -Dproject.groupId or by using a
-    separate Maven invocation per region (see deploy.yml).
-
-    For the primary (EMEA) publish, this is the EMEA BG ID.
-    The deploy.yml workflow overrides groupId per region when publishing.
+    groupId = EMEA Business Group UUID (57c5735b).
+    Exchange publish and CH2 deployment both use this BG UUID.
+    CH2 looks up the Exchange asset by this groupId as businessGroupId.
   -->
   <groupId>57c5735b-b5cd-474c-b978-c9bdb69fb472</groupId>
   <artifactId>mule-sample-app</artifactId>

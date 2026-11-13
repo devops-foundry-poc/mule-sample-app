@@ -1,14 +1,9 @@
 # Production pipeline: approval → Exchange publish → CH2 deploy (EMEA).
 # Triggered on every merge to main.
 #
-# Region control:  vars.DEPLOY_EMEA  (true | false)
-# Region BG IDs:   vars.EMEA_BG_ID   (org-level variable)
-# CH2 target:      vars.EMEA_CH2_TARGET
-#
-# exchange-publish-regional.yml handles: build, version set, groupId alignment,
-# Exchange publish, and artifact upload — all in one job so the release version
-# is consistent throughout (avoids the SNAPSHOT→release version mismatch that
-# caused Exchange 404 when publish and deploy were in separate jobs).
+# pom.xml groupId = EMEA BG UUID (57c5735b). No manipulation needed.
+# Region: EMEA only (vars.DEPLOY_EMEA = true).
+# Credentials: EMEA_NONPROD for Exchange publish; EMEA_PROD for CH2 deploy.
 name: Deploy to Production
 
 on:
@@ -21,8 +16,6 @@ permissions:
   actions: write
 
 jobs:
-  # ── EMEA: approval → publish → deploy ────────────────────────────────────
-
   emea-approve:
     name: Approve EMEA release
     if: ${{ vars.DEPLOY_EMEA == 'true' }}
@@ -65,12 +58,8 @@ jobs:
           exchange_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
           github_token: ${{ github.token }}
 
-      - name: Set pom version to published release version
+      - name: Align pom version to published release version
         run: |
-          # The publish job set a release version (MAJOR.MINOR.run_number).
-          # Align the checked-out pom to that exact version so the CH2 deploy
-          # finds the Exchange asset by the same coordinates.
-          echo "Published version: ${{ needs.publish-emea.outputs.release_version }}"
           $MVN versions:set \
             -DnewVersion="${{ needs.publish-emea.outputs.release_version }}" \
             -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
@@ -83,17 +72,13 @@ jobs:
 
       - name: Deploy to CloudHub 2.0 — EMEA Production
         env:
-          # connected_app: Connected App that orchestrates the CH2 deployment.
           CONNECTED_APP_CLIENT_ID: ${{ secrets.EMEA_PROD_CLIENT_ID }}
           CONNECTED_APP_CLIENT_SECRET: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
-          # env_client: Anypoint environment client_id/secret for runtime access.
-          # TODO: provision a separate env-scoped Connected App for least-privilege.
           ENV_CLIENT_ID: ${{ secrets.EMEA_PROD_CLIENT_ID }}
           ENV_CLIENT_SECRET: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
           SECURE_KEY: ${{ secrets.EMEA_PROD_SECURE_KEY }}
         run: |
           JAR=$(find target -name "*-mule-application.jar" | head -1)
-          echo "Deploying JAR: ${JAR}"
           $MVN mule:deploy -P ch2 \
             -Ddeployment.name="${{ github.event.repository.name }}" \
             -Dbg.id=${{ vars.EMEA_BG_ID }} \
