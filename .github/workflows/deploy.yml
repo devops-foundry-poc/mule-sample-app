@@ -1,12 +1,14 @@
-# Production pipeline: approval → build+Exchange publish+CH2 deploy (EMEA).
-# All three steps run in ONE JOB so the pom.xml release version set during
-# the build is visible to the mule:deploy step.
-# (If publish and deploy were in separate jobs, the deploy job would check
-# out fresh code with the SNAPSHOT version, causing Exchange lookup 404.)
+# Production pipeline: approval → Exchange publish → CH2 deploy (EMEA).
+# Triggered on every merge to main.
 #
 # Region control:  vars.DEPLOY_EMEA  (true | false)
 # Region BG IDs:   vars.EMEA_BG_ID   (org-level variable)
 # CH2 target:      vars.EMEA_CH2_TARGET
+#
+# exchange-publish-regional.yml handles: build, version set, groupId alignment,
+# Exchange publish, and artifact upload — all in one job so the release version
+# is consistent throughout (avoids the SNAPSHOT→release version mismatch that
+# caused Exchange 404 when publish and deploy were in separate jobs).
 name: Deploy to Production
 
 on:
@@ -19,7 +21,7 @@ permissions:
   actions: write
 
 jobs:
-  # ── EMEA: approval gate ───────────────────────────────────────────────────
+  # ── EMEA: approval → publish → deploy ────────────────────────────────────
 
   emea-approve:
     name: Approve EMEA release
@@ -29,11 +31,21 @@ jobs:
     steps:
       - run: echo "EMEA release approved"
 
-  # ── EMEA: build → Exchange publish → CH2 deploy (single job) ─────────────
+  publish-emea:
+    name: Build → Exchange (EMEA)
+    needs: emea-approve
+    uses: devops-foundry-poc/mule-cicd-workflows/.github/workflows/exchange-publish-regional.yml@main
+    with:
+      region_bg_id: ${{ vars.EMEA_BG_ID }}
+      artifact_name: mule-app-emea
+    secrets:
+      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      gh_token: ${{ secrets.GITHUB_TOKEN }}
 
   emea-deploy:
-    name: Build → Exchange → CH2 Production (EMEA)
-    needs: emea-approve
+    name: Deploy Production (EMEA)
+    needs: publish-emea
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -46,47 +58,42 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Configure Maven (EMEA credentials)
+      - name: Configure Maven (EMEA prod credentials)
         uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
         with:
-          exchange_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
-          exchange_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+          exchange_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
+          exchange_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
           github_token: ${{ github.token }}
 
-      - name: Set release version (MAJOR.MINOR.run_number)
-        id: version
+      - name: Set pom version to published release version
         run: |
-          BASE=$($MVN help:evaluate -Dexpression=project.version -q -DforceStdout \
-            --no-transfer-progress --batch-mode)
-          MAJOR_MINOR=$(echo "${BASE%-SNAPSHOT}" | cut -d. -f1,2)
-          VERSION="${MAJOR_MINOR}.${{ github.run_number }}"
-          $MVN versions:set -DnewVersion="${VERSION}" \
+          # The publish job set a release version (MAJOR.MINOR.run_number).
+          # Align the checked-out pom to that exact version so the CH2 deploy
+          # finds the Exchange asset by the same coordinates.
+          echo "Published version: ${{ needs.publish-emea.outputs.release_version }}"
+          $MVN versions:set \
+            -DnewVersion="${{ needs.publish-emea.outputs.release_version }}" \
             -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Release version: ${VERSION}"
 
-      - name: Build and publish to EMEA Exchange
-        run: |
-          $MVN deploy -P deploy-to-exchange-v3 \
-            -DexchangeGroupId=${{ vars.EMEA_BG_ID }} \
-            --no-transfer-progress --batch-mode
+      - name: Download Mule JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: mule-app-emea
+          path: target/
 
       - name: Deploy to CloudHub 2.0 — EMEA Production
         env:
-          # connected_app: Connected App that orchestrates the CH2 deployment (client_credentials grant).
+          # connected_app: Connected App that orchestrates the CH2 deployment.
           CONNECTED_APP_CLIENT_ID: ${{ secrets.EMEA_PROD_CLIENT_ID }}
           CONNECTED_APP_CLIENT_SECRET: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
-          # env_client: Anypoint environment client credentials (anypoint.platform.client_id/secret).
-          # Ideally a separate app scoped to the Production environment only.
-          # Currently reuses the prod Connected App — split when a dedicated env app is provisioned.
+          # env_client: Anypoint environment client_id/secret for runtime access.
+          # TODO: provision a separate env-scoped Connected App for least-privilege.
           ENV_CLIENT_ID: ${{ secrets.EMEA_PROD_CLIENT_ID }}
           ENV_CLIENT_SECRET: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
           SECURE_KEY: ${{ secrets.EMEA_PROD_SECURE_KEY }}
         run: |
-          # Find the built JAR
           JAR=$(find target -name "*-mule-application.jar" | head -1)
-          echo "Deploying: ${JAR}"
-
+          echo "Deploying JAR: ${JAR}"
           $MVN mule:deploy -P ch2 \
             -Ddeployment.name="${{ github.event.repository.name }}" \
             -Dbg.id=${{ vars.EMEA_BG_ID }} \
