@@ -73,8 +73,12 @@ jobs:
 
       - name: Deploy to CloudHub 2.0 — EMEA Production
         env:
+          # connected_app: Connected App that orchestrates the CH2 deployment (client_credentials grant).
           CONNECTED_APP_CLIENT_ID: ${{ secrets.EMEA_PROD_CLIENT_ID }}
           CONNECTED_APP_CLIENT_SECRET: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+          # env_client: Anypoint environment client credentials (anypoint.platform.client_id/secret).
+          # Ideally a separate app scoped to the Production environment only.
+          # Currently reuses the prod Connected App — split when a dedicated env app is provisioned.
           ENV_CLIENT_ID: ${{ secrets.EMEA_PROD_CLIENT_ID }}
           ENV_CLIENT_SECRET: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
           SECURE_KEY: ${{ secrets.EMEA_PROD_SECURE_KEY }}
