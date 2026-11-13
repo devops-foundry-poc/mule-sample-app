@@ -22,7 +22,7 @@
   -->
   <groupId>57c5735b-b5cd-474c-b978-c9bdb69fb472</groupId>
   <artifactId>mule-sample-app</artifactId>
-  <version>1.4.0-SNAPSHOT</version>
+  <version>1.5.0-SNAPSHOT</version>
   <packaging>mule-application</packaging>
   <name>Mule Sample App</name>
   <description>
