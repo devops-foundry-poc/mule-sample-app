@@ -19,7 +19,7 @@
                    path="/api/health"
                    allowedMethods="GET"/>
     <set-payload doc:name="Response"
-                 value='{"status":"UP","app":"mule-sample-app","version":"1.0.0"}'
+                 value='{"status":"UP","app":"mule-sample-app","version":"2.1"}'
                  mimeType="application/json"/>
   </flow>
 
