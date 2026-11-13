@@ -92,9 +92,12 @@ jobs:
       replicas: '2'
       vcores: '0.2'
     secrets:
-      connected_app_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
-      connected_app_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
-      env_client_id: ${{ secrets.EMEA_PROD_CLIENT_ID }}
-      env_client_secret: ${{ secrets.EMEA_PROD_CLIENT_SECRET }}
+      # TODO: switch back to EMEA_PROD_CLIENT_ID once Exchange Viewer scope
+      # is confirmed on the prod Connected App for the EMEA BG.
+      # Using NONPROD temporarily to confirm the pipeline works end-to-end.
+      connected_app_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      connected_app_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
+      env_client_id: ${{ secrets.EMEA_NONPROD_CLIENT_ID }}
+      env_client_secret: ${{ secrets.EMEA_NONPROD_CLIENT_SECRET }}
       secure_key: ${{ secrets.EMEA_PROD_SECURE_KEY }}
       gh_token: ${{ secrets.GITHUB_TOKEN }}
